@@ -1,0 +1,9 @@
+# Azure Functions (Python 3.11, modelo de programación v2)
+azure-functions
+azure-identity
+azure-storage-blob>=12.20
+anthropic>=1.5,<2
+openai>=1.99
+pandas>=2.2
+pyarrow>=15
+pydantic>=2.7

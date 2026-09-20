@@ -1,0 +1,8 @@
+.venv/
+.git*
+.github/
+.vscode/
+__pycache__/
+local.settings.json
+local.settings.json.example
+README.md
