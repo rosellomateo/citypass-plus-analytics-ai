@@ -1,0 +1,24 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "SCHEDULE": "0 0 10 * * 1",
+    "STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true",
+    "INPUT_CONTAINER": "gold",
+    "INPUT_PREFIX": "",
+    "OUTPUT_CONTAINER": "analisis",
+    "OUTPUT_PREFIX": "",
+    "USAR_LLM": "true",
+    "LLM_PROVIDER": "azure_openai",
+    "AZURE_OPENAI_ENDPOINT": "https://<recurso-azure-openai>.openai.azure.com/",
+    "AZURE_OPENAI_API_KEY": "",
+    "AZURE_OPENAI_DEPLOYMENT": "gpt-5-mini",
+    "AZURE_OPENAI_API_VERSION": "2025-04-01-preview",
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_MODEL": "claude-opus-5",
+    "SEMANA_OBJETIVO": "",
+    "SEMANAS_HISTORIA": "8",
+    "CASOS": "reclamos"
+  }
+}
