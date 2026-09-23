@@ -1,0 +1,38 @@
+name: Tests
+
+# Corre en cualquier push (para ver el resultado antes de abrir el PR) y en cada
+# Pull Request hacia main. No toca Azure ni llama al LLM: todo va mockeado.
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'   # la misma version que corre en la Function App
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Correr los tests con cobertura
+        # La rubrica pide 60% minimo; si alguien agrega codigo sin tests y la
+        # cobertura cae por debajo, el check se pone en rojo.
+        run: |
+          pytest --cov=analisis_semanal --cov=function_app \
+                 --cov-report=term-missing --cov-fail-under=60
