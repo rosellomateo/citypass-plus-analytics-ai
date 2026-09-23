@@ -25,6 +25,14 @@ Timer (lunes 07:00 ART) ──> gold/<dominio>/<base>_<WW>_<YYYY>.parquet   (una
                       analisis/<caso>.json   (un archivo por caso, con todas las semanas)
 ```
 
+## Documentación
+
+| Documento | Para quién |
+|---|---|
+| [`docs/documentacion-funcional.md`](docs/documentacion-funcional.md) ([.docx](docs/documentacion-funcional.docx)) | Qué resuelve el módulo, qué produce y con qué reglas de negocio |
+| [`docs/resumen-tecnico.md`](docs/resumen-tecnico.md) ([.docx](docs/resumen-tecnico.docx)) | La solución tecnológica en 5 minutos |
+| [`docs/documentacion-tecnica.md`](docs/documentacion-tecnica.md) | Detalle completo: módulos, datos, errores, extensibilidad, runbook |
+
 ## Lo importante: la capa gold da stock, no flujo
 
 Las capas gold agrupan **toda** la tabla de silver, sin filtrar por fecha, y archivan el resultado cada
