@@ -96,6 +96,32 @@ son un nivel, `SIN_DATO` es un faltante, toda cifra sale de las tablas).
 `riesgos`, `recomendaciones`. Si el modelo rechaza el pedido, se corta por longitud o no se puede parsear,
 es un error explícito: ese dominio queda sin análisis esa semana en vez de escribir un resumen a medias.
 
+## Cómo está armado el prompt
+
+| Pieza | Qué lleva | Cambia cuando |
+|---|---|---|
+| **System prompt** | Rol y audiencia, qué es una foto acumulada, el contrato de las tablas, el **glosario del dominio** y las reglas de comparación | Cambia el dominio |
+| **Mensaje de usuario** | La semana a analizar, las previas, los avisos de la corrida y las tablas en CSV | Cada semana |
+| **Esquema Pydantic** | El formato de la respuesta: cuatro campos, con los rangos ("2 a 5 ítems", "120-180 palabras") en las descripciones | Casi nunca |
+
+Las cinco decisiones que lo definen:
+
+1. **"No tenés que restar nada, usá las cifras como vienen".** No alcanza con darle las altas calculadas:
+   hay que cerrarle la puerta a que recalcule, porque si no "verifica" restando acumulados y cita su propia
+   cuenta.
+2. **El glosario es data, no prompt.** Vive en `casos.py`, junto a las dimensiones y estados que explica.
+   Es lo que evita que el modelo lea mal el vocabulario de un dominio, y lo que permite agregar un dominio
+   sin tocar el prompt.
+3. **Cada regla de comparación tapa un error concreto**: que el acumulado siempre sube, que los promedios
+   son un nivel y no el resultado de la semana, que la primera fila es la foto base, que con volúmenes
+   chicos los porcentajes exageran, que `SIN_DATO` es un faltante.
+4. **El formato lo fija el esquema, no el texto.** Structured outputs: la estructura no puede fallar y no
+   hay que parsear markdown.
+5. **Los avisos los calcula el código.** Si falta el snapshot de una semana, el prompt se lo dice al
+   modelo en vez de dejar que invente una causa para el pico.
+
+Detalle completo, con el prompt real de ejemplo: sección 8 de la documentación técnica.
+
 ## Robustez
 
 | Mecanismo | Para qué |

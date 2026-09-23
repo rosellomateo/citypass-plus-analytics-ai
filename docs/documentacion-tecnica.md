@@ -16,16 +16,17 @@ Análisis ejecutivo semanal de los dominios de CityPass+ con un modelo de lengua
 5. [Modelo de datos](#5-modelo-de-datos)
 6. [Módulo por módulo](#6-módulo-por-módulo)
 7. [Configuración](#7-configuración)
-8. [Integración con el LLM](#8-integración-con-el-llm)
-9. [Persistencia y concurrencia](#9-persistencia-y-concurrencia)
-10. [Manejo de errores](#10-manejo-de-errores)
-11. [Extensibilidad: agregar un dominio](#11-extensibilidad-agregar-un-dominio)
-12. [Testing y CI](#12-testing-y-ci)
-13. [Despliegue](#13-despliegue)
-14. [Seguridad](#14-seguridad)
-15. [Rendimiento y costos](#15-rendimiento-y-costos)
-16. [Runbook](#16-runbook)
-17. [Limitaciones conocidas](#17-limitaciones-conocidas)
+8. [Ingeniería de prompts](#8-ingeniería-de-prompts)
+9. [Integración con el LLM](#9-integración-con-el-llm)
+10. [Persistencia y concurrencia](#10-persistencia-y-concurrencia)
+11. [Manejo de errores](#11-manejo-de-errores)
+12. [Extensibilidad: agregar un dominio](#12-extensibilidad-agregar-un-dominio)
+13. [Testing y CI](#13-testing-y-ci)
+14. [Despliegue](#14-despliegue)
+15. [Seguridad](#15-seguridad)
+16. [Rendimiento y costos](#16-rendimiento-y-costos)
+17. [Runbook](#17-runbook)
+18. [Limitaciones conocidas](#18-limitaciones-conocidas)
 
 ---
 
@@ -143,7 +144,7 @@ citypass-plus-analytics-ai/
 │   ├── llm.py                       Proveedor Anthropic
 │   ├── pipeline.py                  Orquestación: ventana → tablas → LLM → entrada
 │   └── blob_io.py                   Blob Storage: lectura de gold y escritura con ETag
-├── tests/                           109 tests (ver sección 12)
+├── tests/                           109 tests (ver sección 13)
 ├── docs/                            Esta documentación
 └── .github/workflows/tests.yml      CI: tests + 60% de cobertura mínima
 ```
@@ -483,7 +484,8 @@ informa en la metadata **y** se le avisa al modelo.
 descripción de las 3 o 4 tablas, glosario del dominio y reglas de lectura. `mensaje_usuario(...)` arma el
 mensaje con la ventana, los avisos y las tablas en bloques CSV.
 
-Las reglas de lectura son defensas contra errores típicos de un LLM sobre datos acumulados:
+Cómo está compuesto y por qué cada pieza está donde está: **sección 8**. En resumen, las reglas de
+lectura son defensas contra errores típicos de un LLM sobre datos acumulados:
 
 - el acumulado siempre sube, no es noticia;
 - los promedios son un nivel arrastrado por casos viejos, no el resultado de la semana;
@@ -512,7 +514,7 @@ Misma firma, mismo contrato:
 def generar_resumen(mensaje, settings, system_prompt, client=None) -> tuple[ResumenEjecutivo, dict]
 ```
 
-El parámetro `client` opcional existe para inyectar un doble en los tests. Detalles en la sección 8.
+El parámetro `client` opcional existe para inyectar un doble en los tests. Detalles en la sección 9.
 
 ### `pipeline.py`
 
@@ -534,7 +536,7 @@ alguien haya agregado al archivo.
 `leer_json()` devuelve `(documento, etag)` o `(None, None)` si el blob no existe.
 `escribir_json()` crea el container si hace falta y escribe con `ensure_ascii=False` e `indent=2`
 (el JSON queda legible con acentos), content-type `application/json; charset=utf-8`, y la condición de
-ETag de la sección 9.
+ETag de la sección 10.
 
 ### `function_app.py`
 
@@ -575,7 +577,316 @@ Debe estar configurado `STORAGE_CONNECTION_STRING` **o** `STORAGE_ACCOUNT_URL`.
 
 ---
 
-## 8. Integración con el LLM
+## 8. Ingeniería de prompts
+
+El prompt es código: vive en `prompts.py` y `esquema.py`, se arma distinto para cada dominio y está
+cubierto por tests. Esta sección explica cómo está compuesto y, sobre todo, **por qué cada pieza está
+donde está**.
+
+### 8.1 Estructura: qué es estable y qué cambia
+
+| Pieza | Función | Contenido | Cambia cuando |
+|---|---|---|---|
+| **System prompt** | Cómo leer y cómo escribir | Rol, origen de los datos, contrato de las tablas, glosario del dominio, reglas de comparación, estilo | Cambia el dominio |
+| **Mensaje de usuario** | Qué mirar esta semana | Semana analizada, semanas previas, avisos de la corrida, las 3 o 4 tablas en CSV | Cada semana |
+
+La separación no es decorativa. **Todo lo que no depende de la corrida está en el system prompt**, así que
+el prompt de un dominio es byte a byte el mismo todas las semanas: cualquier diferencia entre dos resúmenes
+viene de los datos, no del pedido. Eso hace que el output sea comparable semana a semana y que un cambio de
+comportamiento sea atribuible.
+
+`system_prompt(caso)` concatena cuatro bloques:
+
+| Bloque | Origen | Qué aporta |
+|---|---|---|
+| `ENCABEZADO` | Constante, con el nombre del dominio interpolado | Rol, audiencia y —clave— qué es una foto acumulada |
+| `TABLAS` (+ `TABLA_ESTADO`) | Constante, condicional | El contrato del input: qué es cada tabla y qué significa cada columna |
+| Glosario | **Data del `CasoDeUso`** | Qué es cada fila, qué significan los estados, qué unidad tienen los tiempos |
+| `CIERRE` | Constante | Las reglas de comparación y el estilo |
+
+Para reclamos son ~750 tokens de system prompt. El mensaje de usuario crece con los datos (~8.000 tokens
+con 8 semanas de historia real).
+
+### 8.2 La decisión de fondo: el modelo no calcula
+
+El primer bloque del prompt no explica la tarea: explica **la naturaleza del dato**, porque es donde un
+modelo se equivoca solo.
+
+> De dónde salen los datos: la capa gold archiva todos los domingos una foto ACUMULADA de reclamos (todo lo
+> que existe desde el día cero, repartido por las dimensiones del dominio). Esa foto es un stock: no dice
+> cuántos/as reclamos entraron en la semana. **Las altas semanales ya fueron calculadas restando cada foto
+> contra la anterior, así que no tenés que restar nada, usá las cifras como vienen.**
+
+Hay dos instrucciones ahí, y las dos hacen falta:
+
+1. **Qué significan los números** ("esto es un stock, no un flujo"). Sin esto, el modelo lee el acumulado
+   como si fuera la actividad de la semana y escribe que "los reclamos crecieron un 5%" cuando ese 5% es
+   el crecimiento del total histórico.
+2. **Que no tiene que calcular nada.** No alcanza con darle las altas ya calculadas: si no se le cierra
+   explícitamente la puerta, un modelo tiende a "verificar" restando los acumulados él mismo y termina
+   citando su propia cuenta —que puede estar mal— en lugar de la cifra correcta que ya tenía.
+
+Todo lo aritmético pasó antes, en `metricas.py`. El trabajo del modelo es **elegir qué es importante y
+redactarlo**, que es donde efectivamente agrega valor.
+
+### 8.3 El glosario es data, no prompt
+
+`prompts.py` no menciona ningún dominio. Lo específico —que RECHAZADO es un cierre sin resolución, que
+`tiempoPromRespuestaLugar` son minutos, que el rango de llenado viene vacío en FALLA_SENSOR— vive en el
+campo `glosario` de cada `CasoDeUso`, al lado de las dimensiones y los estados que describe.
+
+Dos razones:
+
+- **Coherencia**: el glosario está junto a la definición que explica. Si alguien agrega un estado a
+  `estados_cerrados` y no lo explica, la inconsistencia se ve en el mismo bloque de código.
+- **Extensibilidad**: agregar un dominio es agregar un `CasoDeUso` con su glosario. No se toca el prompt,
+  así que no hay riesgo de romper los otros cuatro dominios al sumar el quinto.
+
+El glosario es, en la práctica, **la pieza que más define la calidad del resumen**: es lo que evita que el
+modelo interprete mal un vocabulario que no conoce. Por eso el checklist de la sección 12 lo pide
+explícitamente.
+
+### 8.4 El prompt se adapta a la forma del dominio
+
+```python
+f"Recibís {'cuatro' if caso.columna_estado else 'tres'} tablas en CSV:\n"
++ TABLAS.format(...) + (f"\n{TABLA_ESTADO}" if caso.columna_estado else "")
+```
+
+Movilidad y espacios no tienen columna de estado, así que no reciben la tabla `estado` **y el prompt no la
+menciona**. Describir una tabla que no llega es una invitación directa a que el modelo la invente o se
+queje de que falta. El prompt siempre describe exactamente las tablas que va a recibir.
+
+### 8.5 Las reglas de comparación: cada una tapa un modo de falla
+
+El bloque `CIERRE` no es una lista de buenas intenciones: cada regla responde a un error concreto y
+reproducible de un LLM leyendo datos acumulados.
+
+| Regla del prompt | Error que previene |
+|---|---|
+| "El eje del resumen son las altas" | Que el resumen hable del total histórico en vez de la semana |
+| "Los acumulados SIEMPRE suben; que `acumulado_total` crezca no es una noticia" | Presentar como hallazgo algo que pasa por definición todas las semanas |
+| "Los promedios son del acumulado entero… tratalos como un nivel" | Atribuir a la semana un promedio que se mueve despacio y está arrastrado por casos viejos |
+| "La primera semana de `totales` no tiene `altas_semana`: es la foto base" | Reportar la semana base como una semana sin actividad |
+| "Con volúmenes chicos (menos de ~20) usá valores absolutos" | Titular con "+300%" cuando fueron 1 → 4 casos |
+| "Toda cifra que cites tiene que salir de las tablas; no inventes datos" | Alucinación de cifras |
+| "Si proponés una causa, presentala como hipótesis a validar" | Afirmar causalidad a partir de una correlación semanal |
+| "SIN_DATO es un dato faltante, no una categoría" | Tratar los faltantes como un barrio o una categoría real |
+| "Las semanas son ISO: 2026-W38 es la semana que cierra ese domingo" | Confundir la numeración de semanas con el día del mes |
+
+La regla de los promedios y la de la foto base son las dos que más se notan: son errores que un lector no
+técnico no puede detectar, porque el resumen suena perfectamente razonable.
+
+### 8.6 Por qué los datos van en CSV
+
+Las tablas viajan como bloques CSV etiquetados con el nombre de la tabla:
+
+````
+Tabla `totales`:
+```csv
+semana,altas_semana,acumulado_total,abiertos,cerrados,descartados,tiempo_prom_hasta_estado_actual
+2026-W37,,19,14,5,0,8.3
+2026-W38,7,26,17,9,0,10.3
+```
+````
+
+- **CSV y no JSON**: el mismo dato en JSON cuesta entre dos y tres veces más tokens, porque repite el
+  nombre de cada campo en cada fila. Con 120 filas por corrida eso es dinero y contexto.
+- **Etiquetado y en bloque**: el nombre de la tabla en el prompt es el mismo que en el bloque, así que
+  cuando el prompt dice "la tabla `altas`" no hay ambigüedad sobre a qué se refiere.
+- **Redondeado a un decimal** (`a_csv` usa `float_format="%.1f"`): más precisión no aporta a un resumen
+  ejecutivo y gasta tokens.
+- **Marginales en vez del cruce completo**: con decenas de altas repartidas en cuatro dimensiones, casi
+  todas las combinaciones valen 1. Esas filas gastan contexto y, peor, **diluyen la señal**: el modelo ve
+  cien filas de valor 1 y ninguna tendencia. Por eso `altas` abre una dimensión por vez y el cruce
+  completo (`altas_detalle`) va solo de la semana analizada y recortado a las combinaciones más grandes.
+
+### 8.7 El esquema de salida también es prompt
+
+No se le pide el formato por texto ("escribí un párrafo y después una lista de…"). El formato es un
+**structured output**: el JSON Schema de `ResumenEjecutivo` viaja en el pedido y el proveedor garantiza que
+la respuesta lo cumpla.
+
+Las instrucciones de longitud y cantidad están en las `description` de cada campo, que forman parte de ese
+esquema:
+
+```python
+parrafo_ejecutivo: str = Field(
+    description="Un único párrafo de 120 a 180 palabras: cómo fue la última semana frente al histórico, "
+                "integrando lo más importante de los puntos destacados, riesgos y recomendaciones.")
+puntos_destacados: list[str] = Field(description="2 a 5 ítems, una oración cada uno, con cifras cuando aplique.")
+riesgos: list[str] = Field(description="1 a 5 ítems, una oración cada uno.")
+recomendaciones: list[str] = Field(
+    description="2 a 5 acciones concretas que un área de gobierno pueda ejecutar, una oración cada una.")
+```
+
+Tres ventajas sobre pedir el formato en el texto del prompt:
+
+1. **La estructura no puede fallar.** No hay parseo de markdown ni heurísticas: el tablero recibe siempre
+   los mismos cuatro campos, con los tipos correctos.
+2. **La instrucción está donde se valida.** El rango "2 a 5 ítems" viaja pegado al campo que lo cumple, no
+   perdido en un párrafo de instrucciones.
+3. **El prompt queda para lo que importa.** El system prompt habla de cómo leer los datos; el esquema, de
+   cómo entregar la respuesta.
+
+El pedido de que el párrafo ejecutivo "integre lo más importante de los puntos destacados, riesgos y
+recomendaciones" es deliberado: muchos tableros muestran solo el párrafo, y tiene que poder leerse solo.
+
+### 8.8 Avisos: grounding defensivo, calculado por el código
+
+Además de los datos, el mensaje puede llevar avisos que **no salen del modelo sino del código**
+(`pipeline._avisos`):
+
+> Avisos sobre los datos: Entre 2026-W36 y 2026-W38 falta al menos un snapshot, así que las altas de
+> 2026-W38 acumulan más de una semana.
+
+Si falta la foto de una semana, las altas de la siguiente acumulan dos y el modelo vería un pico que no
+existe. Detectarlo es determinístico —lo hace `Ventana.saltos()`— así que lo hace el código y se lo informa;
+lo mismo con las altas negativas por un reproceso. **La anomalía se detecta en el código y se explica en el
+prompt**: el modelo no tiene que adivinar que el dato es raro, y en vez de inventar una causa para el pico,
+lo aclara.
+
+Los mismos avisos quedan en `metadata.avisos`, así que lo que el modelo supo queda registrado en el
+archivo de salida.
+
+### 8.9 Encuadre de la ventana
+
+Las dos primeras líneas del mensaje fijan qué se analiza y contra qué:
+
+> Semana a analizar: 2026-W38, ya cerrada (la foto se tomó el domingo).
+> Semanas previas para comparar: 2026-W37, 2026-W36, …
+
+Sin esto, con 9 semanas en las tablas, nada le dice al modelo cuál es "la semana". El `"ya cerrada"` es
+para que no relativice el dato ("la semana todavía está en curso"), y cuando no hay previas el texto lo
+dice explícitamente (`"no hay"`) en vez de dejar el lugar vacío.
+
+El mensaje cierra con una instrucción corta y sin ambigüedad: `Escribí el resumen ejecutivo.`
+
+### 8.10 Parámetros de inferencia
+
+| Parámetro | Valor | Por qué |
+|---|---|---|
+| `thinking={"type": "adaptive"}` (Anthropic) / `reasoning_effort="medium"` (Azure OpenAI) | Razonamiento habilitado | Comparar 9 semanas × 4 tablas y elegir qué contar requiere trabajo intermedio; sin razonamiento el resumen se vuelve una descripción fila por fila |
+| `max_tokens` / `max_completion_tokens` = 16000 | Holgado | El razonamiento consume tokens de salida; quedarse corto corta la respuesta |
+| Corte por longitud | Error explícito | Un resumen truncado no se escribe en el archivo: falla y se ve en el log (sección 9) |
+| Temperatura | Sin tocar | El determinismo lo dan las cifras ya calculadas y el esquema; bajar la temperatura empobrece la redacción sin mejorar la exactitud |
+
+### 8.11 El prompt completo, con datos de ejemplo
+
+**System prompt** (reclamos, abreviado):
+
+```
+Sos analista de gestión del gobierno de la ciudad. Cada semana escribís el resumen ejecutivo del tablero
+de reclamos de la app CityPass+, para autoridades que lo leen en un minuto.
+
+De dónde salen los datos: la capa gold archiva todos los domingos una foto ACUMULADA de reclamos […]
+Las altas semanales ya fueron calculadas restando cada foto contra la anterior, así que no tenés que
+restar nada, usá las cifras como vienen.
+
+Recibís cuatro tablas en CSV:
+1. totales: una fila por semana. `altas_semana` son las altas de reclamos de esa semana; `acumulado_total`
+   y el resto de las columnas son el stock al cierre del domingo.
+2. altas: las altas de cada semana abiertas de a una dimensión por vez […]
+3. altas_detalle: el cruce completo de dimensiones, solo de la semana analizada […]
+4. estado: el stock al cierre de cada semana por estado (y prioridad cuando aplica).
+
+Glosario de reclamos:
+- Cada fila es una combinacion de barrio, categoria, prioridad, origen de clasificacion y estado actual.
+- estado_actual: RECIBIDO, EN_REVISION, ASIGNADO y EN_PROCESO son reclamos abiertos; RESUELTO y CERRADO
+  son reclamos resueltos; RECHAZADO es un cierre sin resolucion.
+- origenClasificacion: quien asigno la categoria. MODELO = el clasificador automatico; CIUDADANO = el
+  vecino al cargar el reclamo; OPERADOR = una persona del organismo.
+- tiempo_prom_hasta_estado_actual son horas desde el ingreso hasta el estado en el que esta cada reclamo.
+- Los rechazos de reclamos clasificados por MODELO pueden indicar errores de clasificacion automatica.
+
+Cómo comparar:
+- El eje del resumen son las altas […]
+- Los acumulados SIEMPRE suben; que `acumulado_total` crezca no es una noticia […]
+- Los promedios son del acumulado entero, no de la semana […]
+- La primera semana de la tabla `totales` no tiene `altas_semana` […]
+- Con volúmenes chicos (menos de ~20 en un grupo) las variaciones porcentuales exageran […]
+- Toda cifra que cites tiene que salir de las tablas; no inventes datos […]
+- SIN_DATO en cualquier columna es un dato faltante, no una categoría.
+- Las semanas son ISO: 2026-W38 es la semana que cierra ese domingo.
+
+Estilo: español rioplatense neutro, directo, sin jerga técnica, con cifras concretas.
+```
+
+**Mensaje de usuario** (con los datos chicos de los tests, para que entre en una página):
+
+````
+Semana a analizar: 2026-W38, ya cerrada (la foto se tomó el domingo).
+Semanas previas para comparar: 2026-W37.
+
+Tabla `totales`:
+```csv
+semana,altas_semana,acumulado_total,abiertos,cerrados,descartados,tiempo_prom_hasta_estado_actual
+2026-W37,,19,14,5,0,8.3
+2026-W38,7,26,17,9,0,10.3
+```
+
+Tabla `altas`:
+```csv
+semana,dimension,valor,altas
+2026-W38,barrio,Sur,3
+2026-W38,barrio,Centro,2
+2026-W38,barrio,Norte,2
+2026-W38,categoria,RESIDUOS,3
+…
+```
+
+Tabla `altas_detalle`:
+```csv
+semana,barrio,categoria,prioridad,origenClasificacion,altas
+2026-W38,Sur,RESIDUOS,MEDIA,OPERADOR,3
+2026-W38,Centro,BACHES,ALTA,MODELO,2
+2026-W38,Norte,LUMINARIA,BAJA,CIUDADANO,2
+```
+
+Tabla `estado`:
+```csv
+semana,estado_actual,prioridad,cantidad,tiempo_prom_hasta_estado_actual
+2026-W37,RECIBIDO,ALTA,10,5.0
+2026-W37,RESUELTO,ALTA,5,20.0
+…
+```
+
+Escribí el resumen ejecutivo.
+````
+
+Nótese la celda vacía de `altas_semana` en la fila `2026-W37`: es la foto base, y el prompt explica
+exactamente eso para que no se lea como una semana sin actividad.
+
+### 8.12 Cómo iterar sobre el prompt
+
+| Herramienta | Para qué |
+|---|---|
+| `USAR_LLM=false` | Guarda en `entrada_llm` el mensaje exacto que se habría enviado, sin gastar un token |
+| `metadata.filas_enviadas` | Cuántas filas recibió el modelo en esa corrida; la señal de que el prompt está creciendo |
+| `metadata.llm.input_tokens` | El costo real del prompt, por corrida y por dominio |
+| `SEMANAS_HISTORIA` | Palanca directa sobre el tamaño del prompt, sin deploy |
+| `tests/test_prompts.py` | Verifica que el prompt tenga las piezas: glosario del dominio, 3 o 4 tablas, avisos, encuadre |
+| `VERSION_ESQUEMA` | Queda en cada entrada del historial: permite saber con qué versión del pipeline se generó un resumen |
+
+El flujo para cambiar el prompt es: editar `prompts.py` (o el glosario del dominio) → correr con
+`USAR_LLM=false` y leer `entrada_llm` → correr una semana real con `SEMANA_OBJETIVO` sobre una carpeta de
+prueba → comparar el resumen contra el anterior.
+
+### 8.13 Qué se dejó afuera a propósito
+
+| Técnica | Por qué no |
+|---|---|
+| **Few-shot** (ejemplos de resúmenes) | Un ejemplo con cifras es un riesgo de contaminación: el modelo tiende a copiar sus números o su estructura narrativa. El formato ya lo fija el esquema y el estilo se especifica en una línea |
+| **Chain-of-thought explícito** ("pensá paso a paso…") | Los dos proveedores tienen razonamiento nativo (`thinking` / `reasoning_effort`). Pedirlo por prompt duplicaría el trabajo y ensuciaría la salida |
+| **Pedir el formato en texto** | Lo resuelve el structured output, que además no puede fallar |
+| **Prompt único para los cinco dominios** | Un prompt genérico obliga al modelo a inferir el vocabulario del dominio. El glosario por caso es lo que evita que lea mal un estado o una unidad |
+| **Pedirle que calcule algo** | Sección 8.2: toda la aritmética pasó antes, en código cubierto por tests |
+
+---
+
+## 9. Integración con el LLM
+
+Qué se le manda y por qué está armado así: **sección 8**. Esta sección es cómo se le manda.
 
 ### Contrato común
 
@@ -635,7 +946,7 @@ corrida; si creciera mucho, la palanca es bajar `SEMANAS_HISTORIA` o el `top` de
 
 ---
 
-## 9. Persistencia y concurrencia
+## 10. Persistencia y concurrencia
 
 El historial es un único blob por dominio que se lee, se modifica y se vuelve a escribir. Entre la lectura
 y la escritura otra corrida podría escribir el mismo archivo (una ejecución manual mientras corre el
@@ -660,7 +971,7 @@ duplicarla, así que un reintento es seguro.
 
 ---
 
-## 10. Manejo de errores
+## 11. Manejo de errores
 
 ### Aislamiento por dominio
 
@@ -677,8 +988,8 @@ Errores esperables que aíslan un dominio sin frenar la corrida:
 | Dos snapshots de la misma semana | `ValueError` | Nombra la semana repetida |
 | Faltan columnas en el parquet | `ValueError` | Lista las columnas faltantes |
 | Snapshot sin semana ni `fecha_snapshot` | `ValueError` | Explica que no se puede fechar |
-| Rechazo / corte / no parseable del LLM | `RuntimeError` | Sección 8 |
-| El historial cambió en el medio | `RuntimeError` | Sección 9 |
+| Rechazo / corte / no parseable del LLM | `RuntimeError` | Sección 9 |
+| El historial cambió en el medio | `RuntimeError` | Sección 10 |
 | `LLM_PROVIDER` desconocido | `ValueError` | Antes de cualquier llamada de red |
 
 ### Anomalías que no son errores
@@ -691,7 +1002,7 @@ modelo en el mensaje:
 
 ---
 
-## 11. Extensibilidad: agregar un dominio
+## 12. Extensibilidad: agregar un dominio
 
 Alcanza con agregar un `CasoDeUso` al diccionario `CASOS` de `casos.py`. No hay que tocar `datos.py`,
 `metricas.py`, `prompts.py` ni `pipeline.py`.
@@ -730,7 +1041,7 @@ Checklist:
 
 ---
 
-## 12. Testing y CI
+## 13. Testing y CI
 
 ### La suite
 
@@ -752,7 +1063,7 @@ python -m pytest --cov=analisis_semanal --cov=function_app --cov-report=term-mis
 | `test_metricas.py` | 21 | Las cuentas, verificadas a mano: altas, promedios ponderados, estado, contadores |
 | `test_prompts.py` | 6 | 3 o 4 tablas según el dominio; avisos en el mensaje |
 | `test_pipeline.py` | 12 | Metadata y cifras, `SEMANA_OBJETIVO`, avisos, historial sin duplicados |
-| `test_llm.py` | 13 | Armado del pedido por proveedor y las tres fallas de la sección 8 |
+| `test_llm.py` | 13 | Armado del pedido por proveedor y las tres fallas de la sección 9 |
 | `test_blob_io.py` | 13 | Lectura de gold, `(None, None)` si no existe, ETag que no pisa |
 | `test_function_app.py` | 8 | Timer de punta a punta; un dominio sin datos no frena a los demás |
 
@@ -781,7 +1092,7 @@ check se pone en rojo. Se puede desactivar desde la pestaña Actions sin tocar c
 
 ---
 
-## 13. Despliegue
+## 14. Despliegue
 
 ### Local
 
@@ -812,7 +1123,7 @@ y `README.md`: el deploy no cambió al agregar la suite de tests.
 
 ---
 
-## 14. Seguridad
+## 15. Seguridad
 
 - **Secretos**: nunca en el repo. `local.settings.json` está en `.gitignore`; en Azure son App Settings.
 - **Identidad recomendada en producción**: Managed Identity en lugar de keys, con los roles
@@ -825,7 +1136,7 @@ y `README.md`: el deploy no cambió al agregar la suite de tests.
 
 ---
 
-## 15. Rendimiento y costos
+## 16. Rendimiento y costos
 
 | Dimensión | Valor de referencia |
 |---|---|
@@ -840,7 +1151,7 @@ dominio sin instrumentación extra.
 
 ---
 
-## 16. Runbook
+## 17. Runbook
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
@@ -855,7 +1166,7 @@ dominio sin instrumentación extra.
 
 ---
 
-## 17. Limitaciones conocidas
+## 18. Limitaciones conocidas
 
 | Limitación | Impacto | Mitigación posible |
 |---|---|---|
