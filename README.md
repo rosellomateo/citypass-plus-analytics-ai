@@ -25,6 +25,14 @@ Timer (lunes 07:00 ART) ──> gold/<dominio>/<base>_<WW>_<YYYY>.parquet   (una
                       analisis/<caso>.json   (un archivo por caso, con todas las semanas)
 ```
 
+## Documentación
+
+| Documento | Para quién |
+|---|---|
+| [`docs/documentacion-funcional.md`](docs/documentacion-funcional.md) ([.docx](docs/documentacion-funcional.docx)) | Qué resuelve el módulo, qué produce y con qué reglas de negocio |
+| [`docs/resumen-tecnico.md`](docs/resumen-tecnico.md) ([.docx](docs/resumen-tecnico.docx)) | La solución tecnológica en 5 minutos |
+| [`docs/documentacion-tecnica.md`](docs/documentacion-tecnica.md) | Detalle completo: módulos, datos, errores, extensibilidad, runbook |
+
 ## Lo importante: la capa gold da stock, no flujo
 
 Las capas gold agrupan **toda** la tabla de silver, sin filtrar por fecha, y archivan el resultado cada
@@ -80,6 +88,7 @@ archivo, métrica, dimensiones, estados y glosario. No hay que tocar el resto de
 | `analisis_semanal/llm.py` | Proveedor Claude (`LLM_PROVIDER=anthropic`) |
 | `analisis_semanal/pipeline.py` | Orquesta: ventana → tablas → LLM → entrada del historial |
 | `analisis_semanal/blob_io.py` | Blob Storage: lee snapshots, lee/escribe el JSON acumulado (con ETag) |
+| `tests/` | Suite de pytest: datos inventados, Blob Storage y LLM mockeados (ver **Tests**) |
 
 ## Qué recibe el LLM
 
@@ -181,6 +190,32 @@ func azure functionapp publish <nombre-function-app> --python
 Mejoras para producción: Managed Identity en lugar de keys (rol *Cognitive Services OpenAI User* sobre el
 recurso de OpenAI y *Storage Blob Data Contributor* sobre el storage de datos), y las keys restantes en
 Key Vault.
+
+## Tests
+
+La suite corre entera **en local, sin Azure y sin llamar al LLM**: las fotos de gold se arman en memoria,
+`BlobServiceClient` se reemplaza por un doble y los dos proveedores de LLM se inyectan como cliente falso.
+No hace falta ninguna credencial.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest --cov=analisis_semanal --cov=function_app --cov-report=term-missing
+```
+
+| Archivo | Qué cubre |
+|---|---|
+| `tests/test_casos.py` | El registro de los 5 dominios y sus promedios ponderados |
+| `tests/test_config.py` | Defaults de los App Settings y parseo de `CASOS` / `USAR_LLM` |
+| `tests/test_datos.py` | Qué blob es un snapshot (la foto mutable del día se ignora), normalización y ventana |
+| `tests/test_metricas.py` | Las cuentas: altas por resta entre fotos, promedios ponderados, stock por estado |
+| `tests/test_prompts.py` | El prompt según el dominio (3 o 4 tablas) y los avisos sobre los datos |
+| `tests/test_pipeline.py` | Metadata y cifras de la entrada, avisos, e historial que no duplica semanas |
+| `tests/test_llm.py` | Cómo se arma el pedido a cada proveedor y qué pasa ante rechazo o corte |
+| `tests/test_blob_io.py` | Lectura de gold y escritura del historial con ETag (no pisa una corrida paralela) |
+| `tests/test_function_app.py` | El timer de punta a punta: un caso sin datos no frena a los demás |
+
+Cada push y cada Pull Request hacia `main` los corre en GitHub Actions
+(`.github/workflows/tests.yml`), que además exige **60% de cobertura mínima**.
 
 ## Costo
 

@@ -1,0 +1,2 @@
+# Los .docx son binarios: sin conversion de fin de linea ni diff de texto.
+*.docx binary

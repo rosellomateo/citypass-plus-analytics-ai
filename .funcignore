@@ -6,3 +6,7 @@ __pycache__/
 local.settings.json
 local.settings.json.example
 README.md
+tests/
+pytest.ini
+requirements-dev.txt
+.pytest_cache/
