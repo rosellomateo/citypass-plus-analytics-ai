@@ -39,11 +39,20 @@ CASOS_EN_EL_PARRAFO = """\
 Los seis casos de uso transversales (un hecho que nace en un dominio y repercute en los demás):
 {lista}
 
-Regla obligatoria del párrafo ejecutivo: tiene que nombrar los seis casos de uso al menos una vez, por su \
-nombre. Para cada uno, la cifra de la tabla casos_de_uso que corresponda a {nombre}; si un caso no tiene \
-registros en este dominio, decilo en pocas palabras (podés agrupar en una sola oración los que están en \
-cero). Si el glosario dice que un caso se aproxima con otro dato o que el dato no llega a gold, aclaralo en \
-vez de presentarlo como que no pasó nada."""
+Regla obligatoria del párrafo ejecutivo: tiene que mencionar los seis casos de uso al menos una vez, con la \
+cifra de la tabla casos_de_uso que corresponda a {nombre}. Si un caso no tiene registros en este dominio, \
+decilo en pocas palabras (podés agrupar en una sola oración los que están en cero). Si el glosario dice que \
+un caso se aproxima con otro dato o que el dato no llega a gold, aclaralo en vez de presentarlo como que no \
+pasó nada.
+
+Cómo escribirlo: integrá los casos en prosa, como lo diría una persona, en una o dos oraciones que \
+conecten con el resto del párrafo. Nombralos en minúscula y por lo que son ("el evento climático", "los \
+incidentes viales"), sin el número de caso, sin etiquetas copiadas de la tabla y sin listas con dos puntos \
+o punto y coma. Agrupá los que tienen la misma cifra o la misma situación.
+- Mal: "Caso 1 - Evento climático: 7; Caso 2 - Reclamo ciudadano: 0; Caso 3 - Evento masivo: 7."
+- Bien: "El evento climático, el evento masivo, los incidentes viales y las reservas de espacios públicos \
+explican 7 casos cada uno; no hubo registros vinculados a emergencias en bicicleta, y los reclamos que \
+generan trabajo en otros módulos todavía no llegan a gold." """
 
 CIERRE = """\
 Cómo comparar:
@@ -82,7 +91,7 @@ def system_prompt(caso: CasoDeUso) -> str:
         f"Glosario de {caso.nombre}:\n{caso.glosario}",
     ]
     if caso.columna_causa:
-        lista = "\n".join(f"- {t.etiqueta} (causaTipo {', '.join(t.causas)})" for t in CASOS_TRANSVERSALES)
+        lista = "\n".join(f"- {t.etiqueta}: causaTipo {', '.join(t.causas)}" for t in CASOS_TRANSVERSALES)
         partes.append(CASOS_EN_EL_PARRAFO.format(lista=lista, nombre=caso.nombre))
     partes.append(CIERRE)
     return "\n\n".join(partes)

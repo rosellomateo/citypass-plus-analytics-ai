@@ -86,3 +86,14 @@ def test_los_avisos_sobre_los_datos_llegan_al_modelo():
                                       avisos=["Falta el snapshot de 2026-W36."])
 
     assert "Avisos sobre los datos: Falta el snapshot de 2026-W36." in mensaje
+
+
+def test_el_prompt_pide_los_casos_en_prosa_y_no_como_lista():
+    """En la primera corrida real el modelo pego las etiquetas de la tabla en
+    lista ("Caso 1 - Evento climatico: 7; ..."): el prompt lo prohibe con un
+    ejemplo malo y uno bueno."""
+    texto = prompts.system_prompt(casos.RECLAMOS)
+
+    assert "integrá los casos en prosa" in texto
+    assert "sin el número de caso" in texto
+    assert "- Mal:" in texto and "- Bien:" in texto

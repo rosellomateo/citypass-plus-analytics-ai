@@ -213,12 +213,12 @@ class CasoTransversal:
 # los viajes interrumpidos (ver el glosario de cada dominio). EMERGENCIA no va:
 # en movilidad y residuos son emergencias en general, no las de bicicleta.
 CASOS_TRANSVERSALES = (
-    CasoTransversal(1, "Evento climatico", ("EVENTO_CLIMATICO",)),
+    CasoTransversal(1, "Evento climático", ("EVENTO_CLIMATICO",)),
     CasoTransversal(2, "Reclamo ciudadano", ("RECLAMO",)),
     CasoTransversal(3, "Evento masivo", ("EVENTO_PUBLICO",)),
     CasoTransversal(4, "Incidente vial", ("INCIDENTE_VIAL",)),
     CasoTransversal(5, "Emergencia en bicicleta", ("MOVILIDAD_BICICLETA", "ACCIDENTE_VIAL")),
-    CasoTransversal(6, "Reserva de espacio publico", ("RESERVA",)),
+    CasoTransversal(6, "Reserva de espacio público", ("RESERVA",)),
 )
 
 

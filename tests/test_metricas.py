@@ -305,11 +305,11 @@ def test_casos_de_uso_trae_las_seis_filas_por_semana_aunque_valgan_cero(ventana_
 
 def test_casos_de_uso_lee_el_stock_por_causa_y_su_variacion(ventana_espacios):
     tabla = metricas.casos_de_uso(ventana_espacios).set_index(["semana", "caso_de_uso"])
-    clima = tabla.loc[("2026-W38", "Caso 1 - Evento climatico")]
+    clima = tabla.loc[("2026-W38", "Caso 1 - Evento climático")]
 
     assert clima["cantidad"] == 1
     assert clima["variacion_semana"] == 1
-    assert pd.isna(tabla.loc[("2026-W37", "Caso 1 - Evento climatico"), "variacion_semana"])  # foto base
+    assert pd.isna(tabla.loc[("2026-W37", "Caso 1 - Evento climático"), "variacion_semana"])  # foto base
 
 
 def test_casos_de_uso_agrupa_las_causas_del_caso_5():
