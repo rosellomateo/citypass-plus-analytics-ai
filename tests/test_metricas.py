@@ -329,3 +329,114 @@ def test_una_foto_sin_columna_de_causa_queda_en_sin_dato():
     tabla = metricas.casos_de_uso(v)
 
     assert tabla[tabla["semana"] == "2026-W37"]["cantidad"].sum() == 0
+
+
+# --------------------------------------------------------------------------
+# Casos medidos con otras columnas y tablas complementarias (gold ee1c2a8)
+# --------------------------------------------------------------------------
+
+def _fila_caso(tabla, semana, numero, origen):
+    etiqueta = next(t.etiqueta for t in casos.CASOS_TRANSVERSALES if t.numero == numero)
+    fila = tabla[(tabla["semana"] == semana) & (tabla["caso_de_uso"] == etiqueta) & (tabla["tabla"] == origen)]
+    assert len(fila) == 1, fila
+    return fila.iloc[0]
+
+
+def test_reclamos_mide_los_casos_2_y_5_con_sus_columnas_y_tolera_fotos_viejas():
+    """La W37 es anterior a afectaOtrosModulos/vinculadoEmergenciaBici: da 0 sin romper."""
+    viejo = df_reclamos(FILAS_W37)
+    nuevo = df_reclamos(FILAS_W38).assign(
+        causaTipo=["EVENTO_CLIMATICO", None, None, None],
+        afectaOtrosModulos=[True, False, True, False],
+        vinculadoEmergenciaBici=[False, False, False, True],
+    )
+    v = ventana(casos.RECLAMOS, [(37, viejo), (38, nuevo)])
+
+    tabla = metricas.casos_de_uso(v)
+
+    assert _fila_caso(tabla, "2026-W38", 2, "reclamos")["cantidad"] == 8 + 6
+    assert _fila_caso(tabla, "2026-W38", 2, "reclamos")["criterio"] == "afectaOtrosModulos=True"
+    assert _fila_caso(tabla, "2026-W38", 5, "reclamos")["cantidad"] == 3
+    assert _fila_caso(tabla, "2026-W38", 1, "reclamos")["cantidad"] == 8
+    assert _fila_caso(tabla, "2026-W37", 2, "reclamos")["cantidad"] == 0
+
+
+COLUMNAS_RES = ["estado_actual", "causaTipo", "causaTipoAfectacion", "barrio", "origenProgramacion",
+                "cantidadIntervenciones", "cantidadAfectadas", "cantidadCanceladas", "cantidadCompletadas",
+                "camionesDistintos"]
+FILAS_RES = [("AFECTADA", "RECLAMO", "EVENTO_CLIMATICO", "Centro", "NINGUNO", 4, 4, 0, 0, 2),
+             ("CANCELADA", "EVENTO_PUBLICO", "INCIDENTE_VIAL", "Norte", "ALERTA", 3, 3, 3, 0, 1),
+             ("COMPLETADA", "RESERVA", None, "Sur", "EMERGENCIA", 2, 0, 0, 2, 1)]
+
+
+def test_residuos_lee_la_causa_de_la_afectacion_y_el_origen_de_la_programacion():
+    df = pd.DataFrame(FILAS_RES, columns=COLUMNAS_RES)
+    v = ventana(casos.RESIDUOS, [(37, df), (38, df)])
+
+    tabla = metricas.casos_de_uso(v)
+
+    assert _fila_caso(tabla, "2026-W38", 1, "intervenciones")["cantidad"] == 4   # clima en la afectacion
+    assert _fila_caso(tabla, "2026-W38", 2, "intervenciones")["cantidad"] == 4   # reclamo en la programacion
+    assert _fila_caso(tabla, "2026-W38", 4, "intervenciones")["cantidad"] == 3
+    assert _fila_caso(tabla, "2026-W38", 5, "intervenciones")["cantidad"] == 2
+    assert _fila_caso(tabla, "2026-W38", 4, "intervenciones")["cantidadCanceladas"] == 3
+    assert "camionesDistintos" not in metricas.totales(v).columns
+
+
+def test_las_estaciones_distintas_van_por_caso_y_nunca_en_totales():
+    movilidad = ventana(casos.MOVILIDAD, [(37, df_movilidad(FILAS_MOV_W37)),
+                                          (38, df_movilidad(FILAS_MOV_W38))])
+
+    tabla = metricas.casos_de_uso(movilidad)
+
+    assert _fila_caso(tabla, "2026-W38", 1, "movilidad")["estacionesAfectadasDistintas"] == 6
+    assert "estacionesAfectadasDistintas" not in metricas.totales(movilidad).columns
+
+
+AFECTADOS = pd.DataFrame([("RECLAMO", "CIERRE", "PLAZA", "Centro", 5, 3),
+                          ("EVENTO_CLIMATICO", "CIERRE", "PLAZA", "Norte", 2, 2)],
+                         columns=["causaTipo", "tipoAfectacion", "categoria", "barrio",
+                                  "cantidadAfectaciones", "espaciosDistintos"])
+RESERVAS = pd.DataFrame([("ESPACIO", "CONFIRMADA", False, None, "Centro", 6, 120),
+                         ("ESPACIO", "CANCELADA", True, "CANCELAR", "Sur", 2, 40)],
+                        columns=["tipoReserva", "estado_actual", "afectada", "accionAfectacion", "barrio",
+                                 "cantidadReservas", "cantidadPersonas"])
+
+
+def _snap_espacios(semana, df, extras):
+    ruta = f"gold/{casos.ESPACIOS.prefijo}{casos.ESPACIOS.base_archivo}_{semana}_2026.parquet"
+    return datos.construir_snapshot(casos.ESPACIOS, ruta, df, extras)
+
+
+def test_espacios_suma_filas_de_las_tablas_complementarias():
+    base = df_espacios(FILAS_ESP_W37)
+    v = datos.Ventana([
+        _snap_espacios(37, base, {"espacios_afectados": None, "reservas": None}),
+        _snap_espacios(38, df_espacios(FILAS_ESP_W38), {"espacios_afectados": AFECTADOS, "reservas": RESERVAS}),
+    ])
+
+    tabla = metricas.casos_de_uso(v)
+
+    assert _fila_caso(tabla, "2026-W38", 2, "espacios_afectados")["cantidad"] == 5
+    assert _fila_caso(tabla, "2026-W38", 1, "espacios_afectados")["cantidad"] == 2
+    assert _fila_caso(tabla, "2026-W38", 6, "reservas")["cantidad"] == 8
+    assert _fila_caso(tabla, "2026-W38", 5, "reservas")["cantidad"] == 2
+    # Sin foto la semana anterior no hay contra que restar.
+    assert pd.isna(_fila_caso(tabla, "2026-W38", 6, "reservas")["variacion_semana"])
+    # La semana sin foto de las complementarias no inventa filas.
+    assert set(tabla[tabla["semana"] == "2026-W37"]["tabla"]) == {"actividades"}
+
+
+def test_la_variacion_no_resta_contra_una_semana_salteada():
+    extras = {"espacios_afectados": AFECTADOS, "reservas": RESERVAS}
+    df = df_espacios(FILAS_ESP_W38)
+    v = datos.Ventana([
+        _snap_espacios(36, df, extras),
+        _snap_espacios(37, df, {"espacios_afectados": None, "reservas": None}),
+        _snap_espacios(38, df, extras),
+    ])
+
+    tabla = metricas.casos_de_uso(v)
+
+    assert pd.isna(_fila_caso(tabla, "2026-W38", 6, "reservas")["variacion_semana"])
+    assert _fila_caso(tabla, "2026-W38", 1, "actividades")["variacion_semana"] == 0

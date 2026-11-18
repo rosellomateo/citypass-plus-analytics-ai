@@ -138,3 +138,27 @@ def test_si_otra_corrida_escribio_en_el_medio_no_se_pisa(cliente_falso):
                               {"semanas": ["2026-W38"]}, etag=etag_viejo)
 
     assert contenedor.json("reclamos.json")["semanas"] == ["2026-W37"]
+
+
+def test_lee_las_fotos_complementarias_de_la_misma_semana(cliente_falso):
+    """Espacios archiva afectados y reservas al lado de actividades; una semana
+    sin esa foto (antes de que existiera la tabla) queda en None."""
+    import pandas as pd
+    from analisis_semanal import casos as casos_mod
+
+    caso = casos_mod.ESPACIOS
+    gold = cliente_falso.contenedor("gold", existe=True)
+    actividades = pd.DataFrame([("PROGRAMADA", "CULTURAL", None, "CIUDAD", "Centro", 3)],
+                               columns=["estado_actual", "categoria", "causaTipo", "organizadorTipo", "barrio",
+                                        "cantidadActividades"])
+    reservas = pd.DataFrame([("ESPACIO", True, 4)], columns=["tipoReserva", "afectada", "cantidadReservas"])
+    gold.cargar_parquet(f"{caso.prefijo}actividades_resumen_37_2026.parquet", actividades)
+    gold.cargar_parquet(f"{caso.prefijo}actividades_resumen_38_2026.parquet", actividades)
+    gold.cargar_parquet(f"{caso.prefijo}reservas_resumen_38_2026.parquet", reservas)
+
+    w37, w38 = blob_io.leer_snapshots(cliente_falso, "gold", caso)
+
+    assert w37.complementarias == {"espacios_afectados": None, "reservas": None}
+    assert w38.complementarias["espacios_afectados"] is None
+    assert int(w38.complementarias["reservas"]["cantidadReservas"].sum()) == 4
+    assert w38.complementarias["reservas"]["afectada"].tolist() == ["True"]

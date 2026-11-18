@@ -125,6 +125,22 @@ todavía no llega a gold).
 | 5 · Emergencia en bicicleta | `MOVILIDAD_BICICLETA` (emergencias), `ACCIDENTE_VIAL` (espacios); en movilidad, viajes interrumpidos contra NORMAL |
 | 6 · Reserva de espacio público | `RESERVA` |
 
+Algunos dominios miden un caso con otra columna o con otra tabla gold (`criterios_casos` y
+`complementarias` en `casos.py`):
+
+| Dominio | Caso | De dónde sale |
+|---|---|---|
+| reclamos | 2 | `afectaOtrosModulos` (reclamos que generaron trabajo en otro módulo) |
+| reclamos | 5 | `vinculadoEmergenciaBici` |
+| residuos | 1 y 4 | `causaTipoAfectacion` (la causa de la afectación, no la de la programación) |
+| residuos | 5 | `origenProgramacion = EMERGENCIA` |
+| movilidad | todos | además, `estacionesAfectadasDistintas` / `estacionesBloqueadasDistintas` (solo por caso, no se suman) |
+| espacios | 1, 2, 4 | foto semanal de `espacios_afectados_resumen` |
+| espacios | 5, 6 | foto semanal de `reservas_resumen` (afectadas / todas) |
+
+Si una foto vieja no trae esas columnas o tablas, el caso da 0 (o no aparece) y el glosario le pide al
+modelo aclarar que es falta de dato.
+
 La tabla `casos_de_uso` es **stock**, no altas: en espacios `causaTipo` es la causa de la última modificación
 y cambia después del alta, así que no sirve para restar fotos (por eso ya no es dimensión de espacios). Donde
 un dominio es el origen del caso (espacios en el 3, reclamos en el 2) el glosario le indica al modelo de qué
@@ -181,7 +197,7 @@ evolución.
 | `SCHEDULE` | `0 0 10 * * 1` (CRON de 6 campos en UTC = lunes 07:00 ART) |
 | `STORAGE_CONNECTION_STRING` | connection string del storage de datos |
 | `INPUT_CONTAINER` | `gold` |
-| `INPUT_PREFIX` | vacío = el prefijo que declara cada caso; sirve para apuntar a una carpeta de prueba cuando se analiza un solo caso |
+| `INPUT_PREFIX` | vacío = el prefijo que declara cada caso. Con un solo caso es la carpeta exacta; con varios, una raíz que replica gold (`<raíz><carpeta del caso>`), para correr todo contra datos de prueba |
 | `OUTPUT_CONTAINER` / `OUTPUT_PREFIX` | `analisis` / vacío |
 | `CASOS` | `reclamos` (lista separada por comas, o `todos` para los cinco) |
 | `SEMANAS_HISTORIA` | `8` = semanas analizadas; se leen 9 snapshots (la base no se analiza) |

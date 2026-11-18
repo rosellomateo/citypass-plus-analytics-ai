@@ -16,6 +16,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class TablaComplementaria:
+    """Otra tabla gold del mismo dominio, archivada cada domingo igual que la
+    principal (<base>_<WW>_<YYYY>.parquet en la misma carpeta)."""
+    base_archivo: str
+    metrica: str
+    etiqueta: str
+    criterios_casos: dict[int, tuple[str, tuple[str, ...] | None]]
+
+    @property
+    def columnas_criterio(self) -> list[str]:
+        return list(dict.fromkeys(c for c, _ in self.criterios_casos.values()))
+
+
+@dataclass(frozen=True)
 class CasoDeUso:
     nombre: str
     prefijo: str                 # carpeta dentro del container gold
@@ -37,7 +51,25 @@ class CasoDeUso:
     # causa de la ultima modificacion) no sirve para restar fotos, pero si
     # para leer el stock por caso.
     columna_causa: str | None = "causaTipo"
+    # numero de caso transversal -> (columna, valores) cuando el dominio lo
+    # reconoce por otra columna y no por columna_causa. valores=None = todas
+    # las filas. Las columnas son opcionales: si un snapshot viejo no las trae
+    # quedan en SIN_DATO (el caso da 0 esa semana).
+    criterios_casos: dict[int, tuple[str, tuple[str, ...] | None]] = field(default_factory=dict)
+    # contadores que solo se pueden sumar dentro de un caso (por ejemplo
+    # estaciones distintas por causa): van en casos_de_uso, nunca en totales.
+    contadores_por_caso: list[str] = field(default_factory=list)
+    # otras tablas gold del dominio con su propia foto semanal, que aportan
+    # cifras a casos_de_uso (no a las altas)
+    complementarias: tuple["TablaComplementaria", ...] = ()
     glosario: str = ""
+
+    @property
+    def columnas_criterio(self) -> list[str]:
+        columnas = [c for c, _ in self.criterios_casos.values()]
+        if self.columna_causa:
+            columnas.insert(0, self.columna_causa)
+        return [c for c in dict.fromkeys(columnas) if c not in self.dimensiones_todas]
 
     @property
     def dimensiones_todas(self) -> list[str]:
@@ -56,6 +88,10 @@ RECLAMOS = CasoDeUso(
     estados_cerrados=["RESUELTO", "CERRADO"],
     estados_descartados=["RECHAZADO"],
     promedios={"tiempo_prom_hasta_estado_actual": "row_count"},
+    # Caso 2: reclamos que generaron trabajo en otro modulo (la cuenta inversa
+    # de causaTipo = RECLAMO). Caso 5: reclamos vinculados a una emergencia en bici.
+    criterios_casos={2: ("afectaOtrosModulos", ("True",)),
+                     5: ("vinculadoEmergenciaBici", ("True",))},
     glosario="""\
 - Cada fila es una combinacion de barrio, categoria, prioridad, origen de clasificacion y estado actual.
 - estado_actual: RECIBIDO, EN_REVISION, ASIGNADO y EN_PROCESO son reclamos abiertos; RESUELTO y CERRADO son \
@@ -65,8 +101,15 @@ vecino al cargar el reclamo; OPERADOR = una persona del organismo.
 - tiempo_prom_hasta_estado_actual son horas desde el ingreso hasta el estado en el que esta cada reclamo.
 - Los rechazos de reclamos clasificados por MODELO pueden indicar errores de clasificacion automatica.
 - causaTipo dice si el reclamo nacio de un hecho de otro dominio (EVENTO_CLIMATICO, EVENTO_PUBLICO, \
-INCIDENTE_VIAL, RESERVA). Llego con el esquema v2 de ReclamoCreado: los reclamos anteriores lo tienen en \
-SIN_DATO. Los reclamos que a su vez generaron trabajo en otros modulos (caso 2) no estan en gold.""",
+INCIDENTE_VIAL, RESERVA): de ahi salen los casos 1, 3, 4 y 6. Llego con el esquema v2 de ReclamoCreado: \
+los reclamos anteriores lo tienen en SIN_DATO.
+- Caso 2 (reclamo ciudadano): afectaOtrosModulos = reclamos que generaron trabajo en otro modulo (residuos, \
+movilidad, espacios o emergencias los citan como causa). Es lo que el caso pide: reclamos que afectan a los \
+demas modulos.
+- Caso 5 (emergencia en bicicleta): vinculadoEmergenciaBici = reclamos de la via vinculados a una emergencia \
+durante un viaje en bici. Comparalo contra el resto de los reclamos de via (categorias BACHES y TRANSITO).
+- Si en una semana esas dos columnas no existian todavia en gold, el caso da 0 por falta de dato, no porque \
+no haya pasado: aclaralo.""",
 )
 
 EMERGENCIAS = CasoDeUso(
@@ -114,12 +157,17 @@ MOVILIDAD = CasoDeUso(
     # sumarlas entre causas contaria dos veces la misma estacion.
     contadores=["cantidadBloqueadas", "cantidadPreventivas", "cantidadRestauradas",
                 "cantidadViajesInterrumpidos"],
+    # Por caso si: cada caso es un unico causaTipo, una sola fila.
+    contadores_por_caso=["estacionesAfectadasDistintas", "estacionesBloqueadasDistintas"],
     glosario="""\
 - Cada fila es un causaTipo: el motivo por el que se afecto una estacion urbana (EVENTO_CLIMATICO, \
 RECLAMO, EVENTO_PUBLICO, INCIDENTE_VIAL, EMERGENCIA, RESERVA = evento de ciudadanos).
 - cantidadAfectaciones cuenta afectaciones de estaciones (una estacion puede afectarse varias veces).
 - cantidadBloqueadas son afectaciones que bloquearon la estacion; cantidadPreventivas, las anunciadas antes \
 de que empiece la afectacion (tipico de EVENTO_PUBLICO); cantidadRestauradas, las que ya se levantaron.
+- estacionesAfectadasDistintas y estacionesBloqueadasDistintas son estaciones unicas dentro de cada causa \
+(una estacion bloqueada dos veces cuenta una): solo aparecen en casos_de_uso. Para el caso 1 la cifra que \
+pide el caso son las estaciones bloqueadas distintas por evento climatico.
 - cantidadViajesInterrumpidos son viajes que terminaron por esa causa (sobre todo INCIDENTE_VIAL). La fila \
 NORMAL es distinta: no es una afectacion, son los viajes finalizados sin incidente (el resto de sus columnas \
 vale 0) y sirve de base para comparar contra los interrumpidos.
@@ -145,6 +193,23 @@ ESPACIOS = CasoDeUso(
     estados_descartados=["CANCELADA", "CANCELADO"],
     contadores=["cantidadMasivas", "cantidadAfectadasPorClima", "totalVecesEventoClimatico",
                 "totalVecesReclamo", "totalVecesIncidenteVial", "totalVecesAccidenteVial"],
+    complementarias=(
+        TablaComplementaria(
+            base_archivo="espacios_afectados_resumen",
+            metrica="cantidadAfectaciones",
+            etiqueta="espacios_afectados",
+            criterios_casos={1: ("causaTipo", ("EVENTO_CLIMATICO",)),
+                             2: ("causaTipo", ("RECLAMO",)),
+                             4: ("causaTipo", ("INCIDENTE_VIAL",))},
+        ),
+        TablaComplementaria(
+            base_archivo="reservas_resumen",
+            metrica="cantidadReservas",
+            etiqueta="reservas",
+            criterios_casos={5: ("afectada", ("True",)),
+                             6: ("tipoReserva", None)},
+        ),
+    ),
     glosario="""\
 - Cada fila es una combinacion de estado actual, categoria, causa de la ultima modificacion, tipo de \
 organizador y barrio de las actividades (eventos publicos) de la ciudad.
@@ -154,10 +219,14 @@ ACCIDENTE_VIAL (son causas distintas, no un error). Vacio = actividad sin modifi
 la ultima modificacion y cambia despues del alta, asi que solo aparece en la tabla casos_de_uso (stock).
 - Caso 3 (evento masivo): espacios es el origen, no la causa, asi que en casos_de_uso sale en 0. Se lee en \
 cantidadMasivas de la tabla totales.
-- Caso 5 (emergencia en bicicleta): se aproxima con ACCIDENTE_VIAL, porque las reservas afectadas por el \
-accidente todavia no llegan a gold.
-- Caso 6 (reserva de espacio publico): las reservas no llegan a gold; se aproxima con las actividades de \
-organizadorTipo CIUDADANO sobre el total.
+- casos_de_uso trae filas de tres tablas (columna `tabla`): actividades (la principal), espacios_afectados \
+(afectaciones de espacios publicos por causa: casos 1, 2 y 4, la metrica que piden los casos 2 y 4) y \
+reservas (caso 5 = reservas afectadas, caso 6 = todas las reservas ciudadanas).
+- Caso 5 (emergencia en bicicleta): la cifra son las reservas afectadas; ACCIDENTE_VIAL en actividades es \
+un dato de apoyo.
+- Caso 6 (reserva de espacio publico): compara las reservas contra el total de actividades (`acumulado_total`).
+- Si una semana no tiene foto de espacios_afectados o reservas (tablas nuevas), esas filas no aparecen: \
+decilo como falta de dato.
 - SUSPENDIDA no es definitivo: una actividad puede volver a PROGRAMADA. CANCELADA si lo es.
 - cantidadMasivas son actividades con capacidad de 500 personas o mas.
 - cantidadAfectadasPorClima son actividades canceladas o suspendidas por un evento climatico.
@@ -178,7 +247,11 @@ RESIDUOS = CasoDeUso(
     estados_abiertos=["PROGRAMADA"],
     estados_cerrados=["COMPLETADA"],
     estados_descartados=["AFECTADA", "CANCELADA"],
-    contadores=["cantidadAfectadas"],
+    contadores=["cantidadAfectadas", "cantidadCanceladas", "cantidadCompletadas"],
+    # camionesDistintos no va: es por fila y no se puede sumar.
+    criterios_casos={1: ("causaTipoAfectacion", ("EVENTO_CLIMATICO",)),
+                     4: ("causaTipoAfectacion", ("INCIDENTE_VIAL",)),
+                     5: ("origenProgramacion", ("EMERGENCIA",))},
     glosario="""\
 - Cada fila es una combinacion de estado actual y causa. Una intervencion es una parada de una cuadrilla \
 de recoleccion; varias intervenciones pueden responder al mismo caso.
@@ -186,10 +259,15 @@ de recoleccion; varias intervenciones pueden responder al mismo caso.
 (limpieza despues de un evento), RESERVA (contenedores cerca de un espacio reservado) o EMERGENCIA.
 - PROGRAMADA es una intervencion planificada que todavia no se hizo. AFECTADA es una intervencion que no \
 se pudo hacer como estaba planificada (por ejemplo por una tormenta o un corte de calle); COMPLETADA y \
-CANCELADA cierran la intervencion. cantidadAfectadas cuenta las que alguna vez fueron afectadas.
-- La causa de la afectacion (EVENTO_CLIMATICO, INCIDENTE_VIAL) todavia no llega a gold: la tabla solo trae \
-la causa de la programacion. Por eso los casos 1 y 4 aparecen sin registros en este dominio; decilo asi, \
-no como que no hubo intervenciones afectadas.""",
+CANCELADA cierran la intervencion. cantidadAfectadas, cantidadCanceladas y cantidadCompletadas cuentan las \
+que alguna vez quedaron en ese estado.
+- causaTipo es la causa de la PROGRAMACION (casos 2, 3 y 6) y causaTipoAfectacion la de la AFECTACION o \
+cancelacion: el caso 1 son las cuadrillas afectadas por clima (causaTipoAfectacion = EVENTO_CLIMATICO) y el \
+caso 4 las afectadas por incidentes viales (causaTipoAfectacion = INCIDENTE_VIAL).
+- Caso 5 (emergencia en bicicleta): intervenciones programadas por una emergencia (origenProgramacion = \
+EMERGENCIA), para comparar contra las programadas por alertas propias de residuos.
+- Si en una semana causaTipoAfectacion u origenProgramacion no existian todavia en gold, esos casos dan 0 \
+por falta de dato: aclaralo.""",
 )
 
 CASOS = {c.nombre: c for c in (RECLAMOS, EMERGENCIAS, MOVILIDAD, ESPACIOS, RESIDUOS)}

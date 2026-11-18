@@ -32,8 +32,10 @@ TABLA_ESTADO = """\
 
 TABLA_CASOS = """\
 {n}. casos_de_uso: el stock de cada uno de los seis casos de uso transversales de CityPass+ al cierre de \
-cada semana, según el causaTipo de las filas. Siempre vienen las seis filas por semana, aunque valgan 0. \
-`variacion_semana` es el neto contra la foto anterior (no son altas: puede incluir cambios de causa)."""
+cada semana. `tabla` dice de qué tabla gold del dominio sale la fila y `criterio` qué filas se contaron \
+(por defecto el causaTipo; el glosario explica los casos que el dominio mide con otra columna). De la tabla \
+principal siempre vienen las seis filas por semana, aunque valgan 0. `variacion_semana` es el neto contra \
+la foto anterior (no son altas: puede incluir cambios de causa o de estado)."""
 
 CASOS_EN_EL_PARRAFO = """\
 Los seis casos de uso transversales (un hecho que nace en un dominio y repercute en los demás):

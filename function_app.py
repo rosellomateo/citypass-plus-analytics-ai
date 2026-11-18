@@ -22,7 +22,12 @@ logging.getLogger("azure").setLevel(logging.WARNING)
 
 def analizar_caso(cliente, nombre: str, settings: Settings) -> str:
     caso = casos.obtener(nombre)
-    prefijo = settings.input_prefix if len(settings.casos) == 1 else None
+    # INPUT_PREFIX con un solo caso es la carpeta exacta; con varios, una
+    # carpeta raiz que replica la estructura de gold (<raiz>/<prefijo del caso>),
+    # para correr todos los casos contra un juego de datos de prueba.
+    prefijo = None
+    if settings.input_prefix:
+        prefijo = settings.input_prefix if len(settings.casos) == 1 else settings.input_prefix + caso.prefijo
     snapshots = blob_io.leer_snapshots(cliente, settings.input_container, caso, prefijo)
     logging.info("[%s] %d snapshots semanales", caso.nombre, len(snapshots))
 

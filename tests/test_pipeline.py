@@ -53,7 +53,7 @@ def test_modo_sin_llm_devuelve_las_cifras_y_lo_que_se_le_enviaria_al_modelo(
     # los seis casos de uso quedan en 0 en vez de romper la corrida.
     assert metadata["cifras"] == {"altas_semana": 7, "acumulado_total": 26,
                                   "abiertos": 17, "cerrados": 9, "descartados": 0,
-                                  "casos_de_uso": {t.etiqueta: 0 for t in casos.CASOS_TRANSVERSALES}}
+                                  "casos_de_uso": {t.etiqueta: {"reclamos": 0} for t in casos.CASOS_TRANSVERSALES}}
     assert metadata["fuentes"] == [s.ruta for s in snapshots_reclamos]
     # 2 totales + 12 altas + 3 detalle + 7 estado + 12 casos de uso (6 por semana)
     assert metadata["filas_enviadas"] == 36

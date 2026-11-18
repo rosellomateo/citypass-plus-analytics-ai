@@ -54,7 +54,10 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
     if "casos_de_uso" in tablas:
         por_caso = tablas["casos_de_uso"]
         por_caso = por_caso[por_caso["semana"] == ventana.actual.etiqueta]
-        cifras["casos_de_uso"] = {fila.caso_de_uso: int(fila.cantidad) for fila in por_caso.itertuples()}
+        # caso -> tabla -> cantidad (un caso puede salir de mas de una tabla del dominio)
+        cifras["casos_de_uso"] = {}
+        for fila in por_caso.itertuples():
+            cifras["casos_de_uso"].setdefault(fila.caso_de_uso, {})[fila.tabla] = int(fila.cantidad)
 
     entrada = {
         "semana": ventana.actual.etiqueta,

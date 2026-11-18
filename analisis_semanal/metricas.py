@@ -186,29 +186,63 @@ def casos_de_uso(ventana: Ventana):
     None si el dominio no tiene columna de causa.
     """
     caso = ventana.caso
-    if not caso.columna_causa:
+    if not caso.columna_causa and not caso.criterios_casos:
         return None
 
     filas = []
     for snapshot in ventana.serie:
         datos_ = snapshot.datos
         for transversal in CASOS_TRANSVERSALES:
-            sub = datos_[datos_[caso.columna_causa].isin(transversal.causas)]
+            columna, valores = caso.criterios_casos.get(
+                transversal.numero, (caso.columna_causa, transversal.causas))
+            sub = _filtrar(datos_, columna, valores)
             fila = {
                 "semana": snapshot.etiqueta,
                 "caso_de_uso": transversal.etiqueta,
-                "causaTipo": "|".join(transversal.causas),
+                "tabla": caso.base_archivo.removesuffix("_resumen"),
+                "criterio": _criterio(columna, valores),
                 "cantidad": int(sub[caso.metrica].sum()),
             }
-            for contador in caso.contadores:
+            for contador in [*caso.contadores, *caso.contadores_por_caso]:
                 fila[contador] = int(sub[contador].fillna(0).sum())
             fila.update(_promedios_de(caso, sub))
             filas.append(fila)
 
+        # Las tablas complementarias aportan solo los casos que declaran.
+        for tabla in caso.complementarias:
+            foto = snapshot.complementarias.get(tabla.etiqueta)
+            if foto is None:
+                continue
+            for transversal in CASOS_TRANSVERSALES:
+                if transversal.numero not in tabla.criterios_casos:
+                    continue
+                columna, valores = tabla.criterios_casos[transversal.numero]
+                filas.append({
+                    "semana": snapshot.etiqueta,
+                    "caso_de_uso": transversal.etiqueta,
+                    "tabla": tabla.etiqueta,
+                    "criterio": _criterio(columna, valores),
+                    "cantidad": int(_filtrar(foto, columna, valores)[tabla.metrica].sum()),
+                })
+
     tabla = pd.DataFrame(filas)
-    previo = tabla.groupby("caso_de_uso")["cantidad"].shift(1)
-    tabla.insert(4, "variacion_semana", (tabla["cantidad"] - previo).astype("Int64"))
+    # Se resta solo contra la foto inmediatamente anterior de la serie. Si esa
+    # semana no tuvo foto de una complementaria, la variacion queda vacia en
+    # vez de restar contra una semana mas vieja.
+    anterior = {s.etiqueta: p.etiqueta for p, s in zip(ventana.serie, ventana.serie[1:])}
+    cantidades = tabla.set_index(["caso_de_uso", "tabla", "semana"])["cantidad"]
+    previo = [cantidades.get((f.caso_de_uso, f.tabla, anterior.get(f.semana))) for f in tabla.itertuples()]
+    variacion = tabla["cantidad"] - pd.Series(previo, index=tabla.index, dtype="Float64")
+    tabla.insert(5, "variacion_semana", variacion.round().astype("Int64"))
     return tabla
+
+
+def _filtrar(df: pd.DataFrame, columna: str, valores) -> pd.DataFrame:
+    return df if valores is None else df[df[columna].isin(valores)]
+
+
+def _criterio(columna: str, valores) -> str:
+    return f"todas ({columna})" if valores is None else f"{columna}={'|'.join(valores)}"
 
 
 def a_csv(df: pd.DataFrame) -> str:

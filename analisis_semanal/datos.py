@@ -13,12 +13,12 @@ restar fotos consecutivas. Eso se hace en metricas.py.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
 
-from .casos import CasoDeUso
+from .casos import CasoDeUso, TablaComplementaria
 
 COL_FECHA_SNAPSHOT = "fecha_snapshot"
 PATRON_ETIQUETA = re.compile(r"^(\d{4})-W(\d{1,2})$", re.IGNORECASE)
@@ -64,6 +64,9 @@ class Snapshot:
     corte: date | None
     ruta: str
     datos: pd.DataFrame
+    # etiqueta de la tabla complementaria -> su foto de la misma semana
+    # (None si esa semana no se archivo, por ejemplo antes de que existiera)
+    complementarias: dict = field(default_factory=dict, compare=False)
 
     @property
     def etiqueta(self) -> str:
@@ -95,16 +98,14 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
         df[columna] = df[columna].astype("string").fillna(SIN_DATO).astype(str)
     df[caso.metrica] = pd.to_numeric(df[caso.metrica]).fillna(0).astype("int64")
 
-    # La causa es opcional cuando no es dimension: los snapshots anteriores a
-    # que gold la publicara no la traen, y eso no tiene que tirar la corrida.
-    causa = []
-    if caso.columna_causa and caso.columna_causa not in caso.dimensiones_todas:
-        causa = [caso.columna_causa]
-        if caso.columna_causa not in df.columns:
-            df[caso.columna_causa] = SIN_DATO
-        df[caso.columna_causa] = df[caso.columna_causa].astype("string").fillna(SIN_DATO).astype(str)
+    # Las columnas que definen los casos de uso son opcionales cuando no son
+    # dimension: los snapshots anteriores a que gold las publicara no las
+    # traen, y eso no tiene que tirar la corrida.
+    causa = caso.columnas_criterio
+    for columna in causa:
+        df[columna] = _como_texto(df[columna]) if columna in df.columns else SIN_DATO
 
-    opcionales = [*caso.promedios, *caso.contadores]
+    opcionales = [*caso.promedios, *caso.contadores, *caso.contadores_por_caso]
     for columna in opcionales:
         df[columna] = pd.to_numeric(df.get(columna), errors="coerce")
     for columna in caso.promedios.values():
@@ -114,7 +115,28 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
     return df[[*caso.dimensiones_todas, *causa, caso.metrica, *dict.fromkeys(opcionales)]]
 
 
-def construir_snapshot(caso: CasoDeUso, ruta: str, df: pd.DataFrame) -> Snapshot:
+def _como_texto(serie: pd.Series) -> pd.Series:
+    """Texto con nulos explicitos. Los booleanos quedan "True"/"False"."""
+    return serie.astype("string").fillna(SIN_DATO).astype(str)
+
+
+def normalizar_complementaria(tabla: TablaComplementaria, df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for columna in tabla.columnas_criterio:
+        df[columna] = _como_texto(df[columna]) if columna in df.columns else SIN_DATO
+    df[tabla.metrica] = pd.to_numeric(df.get(tabla.metrica, 0), errors="coerce").fillna(0).astype("int64")
+    return df[[*tabla.columnas_criterio, tabla.metrica]]
+
+
+def ruta_complementaria(caso: CasoDeUso, tabla: TablaComplementaria, ruta: str) -> str:
+    """Misma carpeta y misma semana que la foto principal, otra base de archivo."""
+    carpeta, _, nombre = ruta.rpartition("/")
+    nuevo = nombre.replace(caso.base_archivo, tabla.base_archivo, 1)
+    return f"{carpeta}/{nuevo}" if carpeta else nuevo
+
+
+def construir_snapshot(caso: CasoDeUso, ruta: str, df: pd.DataFrame,
+                       complementarias: dict[str, pd.DataFrame | None] | None = None) -> Snapshot:
     """Arma el Snapshot tomando la semana del nombre del blob y, si falta, de
     la columna fecha_snapshot (las dos salen del mismo datetime en gold)."""
     corte = None
@@ -131,8 +153,13 @@ def construir_snapshot(caso: CasoDeUso, ruta: str, df: pd.DataFrame) -> Snapshot
         iso = corte.isocalendar()
         semana = (iso.year, iso.week)
 
+    extras = {}
+    for tabla in caso.complementarias:
+        crudo = (complementarias or {}).get(tabla.etiqueta)
+        extras[tabla.etiqueta] = None if crudo is None else normalizar_complementaria(tabla, crudo)
+
     return Snapshot(caso=caso, anio=semana[0], semana=semana[1], corte=corte,
-                    ruta=ruta, datos=normalizar(caso, df))
+                    ruta=ruta, datos=normalizar(caso, df), complementarias=extras)
 
 
 @dataclass(frozen=True)
