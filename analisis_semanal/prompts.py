@@ -6,7 +6,9 @@ CasoDeUso.
 """
 from __future__ import annotations
 
-from .casos import CasoDeUso
+import unicodedata
+
+from .casos import CASOS_TRANSVERSALES, CasoDeUso
 
 ENCABEZADO = """\
 Sos analista de gestión del gobierno de la ciudad. Cada semana escribís el resumen ejecutivo del tablero \
@@ -26,7 +28,33 @@ valor, altas). Las filas de una misma semana y dimensión suman el total de alta
 más grandes."""
 
 TABLA_ESTADO = """\
-4. estado: el stock al cierre de cada semana por estado (y prioridad cuando aplica)."""
+{n}. estado: el stock al cierre de cada semana por estado (y prioridad cuando aplica)."""
+
+TABLA_CASOS = """\
+{n}. casos_de_uso: el stock de cada uno de los seis casos de uso transversales de CityPass+ al cierre de \
+cada semana. `tabla` dice de qué tabla gold del dominio sale la fila y `criterio` qué filas se contaron \
+(por defecto el causaTipo; el glosario explica los casos que el dominio mide con otra columna). De la tabla \
+principal siempre vienen las seis filas por semana, aunque valgan 0. `variacion_semana` es el neto contra \
+la foto anterior (no son altas: puede incluir cambios de causa o de estado)."""
+
+CASOS_EN_EL_PARRAFO = """\
+Los seis casos de uso transversales (un hecho que nace en un dominio y repercute en los demás):
+{lista}
+
+Regla obligatoria del párrafo ejecutivo: tiene que mencionar los seis casos de uso al menos una vez, con la \
+cifra de la tabla casos_de_uso que corresponda a {nombre}. Si un caso no tiene registros en este dominio, \
+decilo en pocas palabras (podés agrupar en una sola oración los que están en cero). Si el glosario dice que \
+un caso se aproxima con otro dato o que el dato no llega a gold, aclaralo en vez de presentarlo como que no \
+pasó nada.
+
+Cómo escribirlo: integrá los casos en prosa, como lo diría una persona, en una o dos oraciones que \
+conecten con el resto del párrafo. Nombralos en minúscula y por lo que son ("el evento climático", "los \
+incidentes viales"), sin el número de caso, sin etiquetas copiadas de la tabla y sin listas con dos puntos \
+o punto y coma. Agrupá los que tienen la misma cifra o la misma situación.
+- Mal: "Caso 1 - Evento climático: 7; Caso 2 - Reclamo ciudadano: 0; Caso 3 - Evento masivo: 7."
+- Bien: "El evento climático, el evento masivo, los incidentes viales y las reservas de espacios públicos \
+explican 7 casos cada uno; no hubo registros vinculados a emergencias en bicicleta, y los reclamos que \
+generan trabajo en otros módulos todavía no llegan a gold." """
 
 CIERRE = """\
 Cómo comparar:
@@ -48,16 +76,56 @@ presentala como hipótesis a validar.
 Estilo: español rioplatense neutro, directo, sin jerga técnica, con cifras concretas."""
 
 
+CANTIDADES = {3: "tres", 4: "cuatro", 5: "cinco"}
+
+
 def system_prompt(caso: CasoDeUso) -> str:
+    tablas = [TABLAS.format(metrica=caso.etiqueta_metrica)]
+    if caso.columna_estado:
+        tablas.append(TABLA_ESTADO.format(n=len(tablas) + 3))
+    if caso.columna_causa:
+        tablas.append(TABLA_CASOS.format(n=len(tablas) + 3))
+    cantidad = len(tablas) + 2
+
     partes = [
         ENCABEZADO.format(nombre=caso.nombre, metrica=caso.etiqueta_metrica),
-        f"Recibís {'cuatro' if caso.columna_estado else 'tres'} tablas en CSV:\n"
-        + TABLAS.format(metrica=caso.etiqueta_metrica)
-        + (f"\n{TABLA_ESTADO}" if caso.columna_estado else ""),
+        f"Recibís {CANTIDADES[cantidad]} tablas en CSV:\n" + "\n".join(tablas),
         f"Glosario de {caso.nombre}:\n{caso.glosario}",
-        CIERRE,
     ]
+    if caso.columna_causa:
+        lista = "\n".join(f"- {t.etiqueta}: causaTipo {', '.join(t.causas)}" for t in CASOS_TRANSVERSALES)
+        partes.append(CASOS_EN_EL_PARRAFO.format(lista=lista, nombre=caso.nombre))
+    partes.append(CIERRE)
     return "\n\n".join(partes)
+
+
+def casos_sin_mencion(parrafo: str) -> list[str]:
+    """Casos de uso transversales que el parrafo no nombra. Es un control
+    grueso (busca el nombre del caso o su numero), para dejar registro si el
+    modelo se salteo la regla; no reemplaza leer el resumen."""
+    texto = _sin_acentos(parrafo.lower())
+    faltan = []
+    for transversal in CASOS_TRANSVERSALES:
+        claves = [_sin_acentos(transversal.nombre.lower()), f"caso {transversal.numero}",
+                  *PALABRAS_CLAVE.get(transversal.numero, ())]
+        if not any(clave in texto for clave in claves):
+            faltan.append(transversal.etiqueta)
+    return faltan
+
+
+# Formas habituales de nombrar cada caso en un texto corrido.
+PALABRAS_CLAVE = {
+    1: ("climatic", "clima"),
+    2: ("reclamo",),
+    3: ("evento masivo", "eventos masivos", "evento publico", "eventos publicos"),
+    4: ("incidente vial", "incidentes viales"),
+    5: ("bicicleta", "bici"),
+    6: ("reserva",),
+}
+
+
+def _sin_acentos(texto: str) -> str:
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
 
 
 def mensaje_usuario(tablas: dict, semana_actual: str, historico: list,

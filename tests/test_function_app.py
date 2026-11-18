@@ -61,22 +61,35 @@ def test_una_semana_nueva_se_suma_al_historial(gold_con_reclamos, caso_reclamos)
     assert documento["analisis"][-1]["metadata"]["cifras"]["altas_semana"] == 5
 
 
-def test_el_prefijo_de_prueba_solo_aplica_con_un_caso(cliente_falso, caso_reclamos):
-    """INPUT_PREFIX es para apuntar a una carpeta de prueba analizando un caso
-    solo; con varios casos cada uno tiene que leer su propia carpeta."""
+def test_con_un_caso_el_prefijo_de_prueba_es_la_carpeta_exacta(cliente_falso, caso_reclamos):
     gold = cliente_falso.contenedor("gold", existe=True)
     base = caso_reclamos.base_archivo
-    gold.cargar_parquet(f"{caso_reclamos.prefijo}{base}_37_2026.parquet", df_reclamos(FILAS_W38))
-    gold.cargar_parquet(f"{caso_reclamos.prefijo}{base}_38_2026.parquet", df_reclamos(FILAS_W38))
+    gold.cargar_parquet(f"prueba/{base}_37_2026.parquet", df_reclamos(FILAS_W38))
+    gold.cargar_parquet(f"prueba/{base}_38_2026.parquet", df_reclamos(FILAS_W38))
 
-    varios = settings(casos=["reclamos", "movilidad"], input_prefix="carpeta-inexistente/")
+    function_app.analizar_caso(cliente_falso, "reclamos", settings(input_prefix="prueba/"))
+
+    assert cliente_falso.contenedor("analisis").json("reclamos.json")["semanas"] == ["2026-W38"]
+
+
+def test_con_varios_casos_el_prefijo_de_prueba_es_una_raiz(cliente_falso, caso_reclamos):
+    """Para correr todos los casos contra un juego de datos de prueba: cada uno
+    lee <raiz>/<su carpeta de gold>, nunca la carpeta real."""
+    gold = cliente_falso.contenedor("gold", existe=True)
+    base = caso_reclamos.base_archivo
+    gold.cargar_parquet(f"prueba/{caso_reclamos.prefijo}{base}_37_2026.parquet", df_reclamos(FILAS_W38))
+    gold.cargar_parquet(f"prueba/{caso_reclamos.prefijo}{base}_38_2026.parquet", df_reclamos(FILAS_W38))
+    # La carpeta real tiene otra cosa: no se tiene que leer.
+    gold.cargar_parquet(f"{caso_reclamos.prefijo}{base}_39_2026.parquet", df_reclamos(FILAS_W38))
+
+    varios = settings(casos=["reclamos", "movilidad"], input_prefix="prueba/")
     function_app.analizar_caso(cliente_falso, "reclamos", varios)
 
     assert cliente_falso.contenedor("analisis").json("reclamos.json")["semanas"] == ["2026-W38"]
 
     with pytest.raises(FileNotFoundError):
         function_app.analizar_caso(cliente_falso, "reclamos",
-                                   settings(input_prefix="carpeta-inexistente/"))
+                                   settings(casos=["reclamos", "movilidad"], input_prefix="otra/"))
 
 
 def test_un_caso_desconocido_no_se_analiza(cliente_falso):

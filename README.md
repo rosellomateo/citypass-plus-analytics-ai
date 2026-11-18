@@ -15,7 +15,7 @@ Timer (lunes 07:00 ART) ──> gold/<dominio>/<base>_<WW>_<YYYY>.parquet   (una
                       casos.py     (qué dimensiones, qué métrica y qué estados tiene el dominio)
                       datos.py     (descubre y ordena snapshots, elige la ventana)
                       metricas.py  (altas = foto - foto anterior; stock por estado)
-                              │  3 o 4 tablas en CSV
+                              │  4 o 5 tablas en CSV
                               ▼
                       LLM con salida estructurada (Pydantic)
                         · azure_openai: gpt-5-mini   (default)
@@ -63,13 +63,13 @@ con los demás.
 | Caso | Carpeta en gold | Métrica | Dimensiones | Estado |
 |---|---|---|---|---|
 | `reclamos` | `Reclamos/` | `row_count` | barrio, categoria, prioridad, origenClasificacion | `estado_actual` |
-| `emergencias` | `Emergencias y Seguridad/` | `cantidadEmergencias` | prioridad | `estado_actual` |
-| `movilidad` | `Movilidad Urbana/` | `cantidadViajes` | fechaInicio, estacionInicio, duracionViaje | — |
-| `espacios` | `Espacios Publicos y Cultura/` | `cantidadTotal` | recursoId, tipoReserva, categoria, zona | — |
-| `residuos` | `Gestion de Residuos Inteligente/` | `cantidadAlertas` | zona, tipoAlerta, prioridad, rangoNivelLlenado | — |
+| `emergencias` | `Emergencias y Seguridad/` | `cantidadEmergencias` | prioridad, categoria, causaTipo, afectaCirculacion | `estado_actual` |
+| `movilidad` | `Movilidad Urbana/` | `cantidadAfectaciones` | causaTipo | — |
+| `espacios` | `Espacios Publicos y Cultura/` | `cantidadActividades` | categoria, organizadorTipo, barrio | `estado_actual` |
+| `residuos` | `Gestion de Residuos Inteligente/` | `cantidadIntervenciones` | causaTipo | `estado_actual` |
 
-Los dominios con estado reciben además la tabla `estado` (el stock del backlog). Los que no, llevan su
-estado en contadores acumulados (`cantidadConfirmadas`, `cantidadResueltas`, …) que van en `totales`.
+Los dominios con estado reciben además la tabla `estado` (el stock del backlog). Los contadores acumulados
+(`cantidadBloqueadas`, `cantidadMasivas`, `criticidadAfectada`, …) van en `totales`.
 
 **Para sumar un dominio nuevo alcanza con agregar un `CasoDeUso` en `casos.py`**: prefijo, nombre base del
 archivo, métrica, dimensiones, estados y glosario. No hay que tocar el resto del código.
@@ -100,6 +100,7 @@ Tablas en CSV, ya calculadas (el modelo no tiene que restar nada):
 | `altas` | semana × dimensión × valor | Altas de cada semana, marginales en formato largo |
 | `altas_detalle` | semana analizada, cruce completo | Las combinaciones más grandes de la última semana |
 | `estado` | semana × estado × prioridad | Cómo quedó el backlog (solo si el dominio tiene estado) |
+| `casos_de_uso` | semana × caso de uso transversal | Stock de cada uno de los 6 casos de uso (por `causaTipo`), siempre las 6 filas |
 
 Las marginales en vez del cruce completo para todas las semanas son a propósito: con decenas de altas
 repartidas en varias dimensiones casi todas las combinaciones valen 1 y esas filas gastan tokens sin decir
@@ -108,6 +109,42 @@ nada.
 El prompt le aclara al modelo que los acumulados siempre suben, que los promedios son un nivel arrastrado
 por casos viejos (no el resultado de la semana) y que la primera semana de `totales` no tiene altas porque
 es la foto base.
+
+## Los seis casos de uso transversales en el párrafo ejecutivo
+
+Además de su dominio, cada resumen tiene que **nombrar los seis casos de uso de la Parte 2** al menos una vez
+en el párrafo ejecutivo: con su cifra, o aclarando que no tiene registros en ese dominio (o que el dato
+todavía no llega a gold).
+
+| Caso | `causaTipo` |
+|---|---|
+| 1 · Evento climático | `EVENTO_CLIMATICO` |
+| 2 · Reclamo ciudadano | `RECLAMO` |
+| 3 · Evento masivo | `EVENTO_PUBLICO` |
+| 4 · Incidente vial | `INCIDENTE_VIAL` |
+| 5 · Emergencia en bicicleta | `MOVILIDAD_BICICLETA` (emergencias), `ACCIDENTE_VIAL` (espacios); en movilidad, viajes interrumpidos contra NORMAL |
+| 6 · Reserva de espacio público | `RESERVA` |
+
+Algunos dominios miden un caso con otra columna o con otra tabla gold (`criterios_casos` y
+`complementarias` en `casos.py`):
+
+| Dominio | Caso | De dónde sale |
+|---|---|---|
+| reclamos | 2 | `afectaOtrosModulos` (reclamos que generaron trabajo en otro módulo) |
+| reclamos | 5 | `vinculadoEmergenciaBici` |
+| residuos | 1 y 4 | `causaTipoAfectacion` (la causa de la afectación, no la de la programación) |
+| residuos | 5 | `origenProgramacion = EMERGENCIA` |
+| movilidad | todos | además, `estacionesAfectadasDistintas` / `estacionesBloqueadasDistintas` (solo por caso, no se suman) |
+| espacios | 1, 2, 4 | foto semanal de `espacios_afectados_resumen` |
+| espacios | 5, 6 | foto semanal de `reservas_resumen` (afectadas / todas) |
+
+Si una foto vieja no trae esas columnas o tablas, el caso da 0 (o no aparece) y el glosario le pide al
+modelo aclarar que es falta de dato.
+
+La tabla `casos_de_uso` es **stock**, no altas: en espacios `causaTipo` es la causa de la última modificación
+y cambia después del alta, así que no sirve para restar fotos (por eso ya no es dimensión de espacios). Donde
+un dominio es el origen del caso (espacios en el 3, reclamos en el 2) el glosario le indica al modelo de qué
+columna leerlo. `metadata.casos_sin_mencion` deja registro si el modelo se salteó algún caso.
 
 ## Salida: un JSON por caso de uso, acumulativo
 
@@ -118,7 +155,7 @@ corrida en paralelo.
 ```jsonc
 {
   "caso_de_uso": "reclamos",
-  "version_esquema": "3.0",
+  "version_esquema": "3.1",
   "actualizado_en": "2026-09-21T10:00:12+00:00",
   "ultima_semana": "2026-W38",
   "semanas": ["2026-W37", "2026-W38"],
@@ -127,7 +164,7 @@ corrida en paralelo.
       "semana": "2026-W38",
       "generado_en": "2026-09-21T10:00:12+00:00",
       "resumen": {
-        "parrafo_ejecutivo": "…",          // un párrafo de ~120-180 palabras
+        "parrafo_ejecutivo": "…",          // un párrafo de ~150-230 palabras que nombra los 6 casos de uso
         "puntos_destacados": ["…"],
         "riesgos": ["…"],
         "recomendaciones": ["…"]
@@ -136,7 +173,9 @@ corrida en paralelo.
         "caso_de_uso": "reclamos", "semana_actual": "2026-W38",
         "semanas_comparadas": ["…"], "snapshot_base": "2026-W31",
         "fuentes": ["…"], "corte": "2026-09-20", "avisos": ["…"],
-        "cifras": { "altas_semana": 57, "acumulado_total": 469, "abiertos": 288 },
+        "cifras": { "altas_semana": 57, "acumulado_total": 469, "abiertos": 288,
+                    "casos_de_uso": { "Caso 1 - Evento climatico": 7, "…": 0 } },
+        "casos_sin_mencion": [],         // casos que el párrafo no nombró (control grueso)
         "llm": { "proveedor": "…", "modelo_respuesta": "…", "input_tokens": 0, "output_tokens": 0 }
       }
     }
@@ -158,7 +197,7 @@ evolución.
 | `SCHEDULE` | `0 0 10 * * 1` (CRON de 6 campos en UTC = lunes 07:00 ART) |
 | `STORAGE_CONNECTION_STRING` | connection string del storage de datos |
 | `INPUT_CONTAINER` | `gold` |
-| `INPUT_PREFIX` | vacío = el prefijo que declara cada caso; sirve para apuntar a una carpeta de prueba cuando se analiza un solo caso |
+| `INPUT_PREFIX` | vacío = el prefijo que declara cada caso. Con un solo caso es la carpeta exacta; con varios, una raíz que replica gold (`<raíz><carpeta del caso>`), para correr todo contra datos de prueba |
 | `OUTPUT_CONTAINER` / `OUTPUT_PREFIX` | `analisis` / vacío |
 | `CASOS` | `reclamos` (lista separada por comas, o `todos` para los cinco) |
 | `SEMANAS_HISTORIA` | `8` = semanas analizadas; se leen 9 snapshots (la base no se analiza) |
@@ -208,7 +247,7 @@ No hace falta ninguna credencial.
 | `tests/test_config.py` | Defaults de los App Settings y parseo de `CASOS` / `USAR_LLM` |
 | `tests/test_datos.py` | Qué blob es un snapshot (la foto mutable del día se ignora), normalización y ventana |
 | `tests/test_metricas.py` | Las cuentas: altas por resta entre fotos, promedios ponderados, stock por estado |
-| `tests/test_prompts.py` | El prompt según el dominio (3 o 4 tablas) y los avisos sobre los datos |
+| `tests/test_prompts.py` | El prompt según el dominio (4 o 5 tablas), la regla de los 6 casos de uso y los avisos |
 | `tests/test_pipeline.py` | Metadata y cifras de la entrada, avisos, e historial que no duplica semanas |
 | `tests/test_llm.py` | Cómo se arma el pedido a cada proveedor y qué pasa ante rechazo o corte |
 | `tests/test_blob_io.py` | Lectura de gold y escritura del historial con ETag (no pisa una corrida paralela) |

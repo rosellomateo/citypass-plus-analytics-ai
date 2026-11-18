@@ -37,3 +37,15 @@ def test_cada_promedio_se_pondera_con_una_columna_que_existe():
         columnas = {caso.metrica, *caso.contadores}
         for promedio, peso in caso.promedios.items():
             assert peso in columnas, f"{caso.nombre}: {promedio} se pondera por {peso}, que no se lee"
+
+
+def test_hay_seis_casos_de_uso_transversales_con_causas_sin_repetir():
+    causas = [c for t in casos.CASOS_TRANSVERSALES for c in t.causas]
+
+    assert [t.numero for t in casos.CASOS_TRANSVERSALES] == [1, 2, 3, 4, 5, 6]
+    assert len(causas) == len(set(causas))
+
+
+def test_espacios_no_resta_por_una_causa_que_cambia_despues_del_alta():
+    assert "causaTipo" not in casos.ESPACIOS.dimensiones
+    assert casos.ESPACIOS.columna_causa == "causaTipo"

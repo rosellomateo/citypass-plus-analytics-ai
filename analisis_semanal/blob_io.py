@@ -50,8 +50,18 @@ def leer_snapshots(cliente: BlobServiceClient, contenedor: str, caso: CasoDeUso,
     snapshots = []
     for nombre in nombres:
         contenido = container.download_blob(nombre).readall()
+        complementarias = {}
+        for tabla in caso.complementarias:
+            ruta = datos.ruta_complementaria(caso, tabla, nombre)
+            try:
+                complementarias[tabla.etiqueta] = pd.read_parquet(
+                    io.BytesIO(container.download_blob(ruta).readall()))
+            except ResourceNotFoundError:
+                # Semanas anteriores a que gold archivara esta tabla.
+                complementarias[tabla.etiqueta] = None
+                log.info("Sin foto de %s para %s", tabla.etiqueta, nombre)
         snapshot = datos.construir_snapshot(caso, f"{contenedor}/{nombre}",
-                                            pd.read_parquet(io.BytesIO(contenido)))
+                                            pd.read_parquet(io.BytesIO(contenido)), complementarias)
         log.info("Leido %s -> %s (%d filas, %d %s)", snapshot.ruta, snapshot.etiqueta,
                  len(snapshot.datos), snapshot.total, caso.etiqueta_metrica)
         snapshots.append(snapshot)

@@ -10,6 +10,7 @@ resumen ejecutivo.
 - altas:         altas de cada semana abiertas de a una dimension por vez.
 - altas_detalle: el cruce completo, solo de la semana analizada y acotado a las mas grandes.
 - estado:        como quedo el stock por estado al cierre (solo si el dominio tiene estado).
+- casos_de_uso:  stock de cada uno de los seis casos de uso transversales (por causaTipo).
 
 Las marginales en vez del cruce completo son a proposito: con decenas de altas
 repartidas en varias dimensiones casi todas las combinaciones valen 1, y esas
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .casos import CasoDeUso
+from .casos import CASOS_TRANSVERSALES, CasoDeUso
 from .datos import Snapshot, Ventana
 
 
@@ -175,6 +176,75 @@ def totales(ventana: Ventana) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def casos_de_uso(ventana: Ventana):
+    """Stock de cada caso de uso transversal al cierre de cada semana.
+
+    Siempre trae las seis filas por semana, aunque valgan 0: un caso sin
+    registros en el dominio tambien es algo que el resumen tiene que decir.
+    Es stock y no altas porque la causa puede cambiar despues del alta
+    (espacios); `variacion_semana` es el neto contra la foto anterior.
+    None si el dominio no tiene columna de causa.
+    """
+    caso = ventana.caso
+    if not caso.columna_causa and not caso.criterios_casos:
+        return None
+
+    filas = []
+    for snapshot in ventana.serie:
+        datos_ = snapshot.datos
+        for transversal in CASOS_TRANSVERSALES:
+            columna, valores = caso.criterios_casos.get(
+                transversal.numero, (caso.columna_causa, transversal.causas))
+            sub = _filtrar(datos_, columna, valores)
+            fila = {
+                "semana": snapshot.etiqueta,
+                "caso_de_uso": transversal.etiqueta,
+                "tabla": caso.base_archivo.removesuffix("_resumen"),
+                "criterio": _criterio(columna, valores),
+                "cantidad": int(sub[caso.metrica].sum()),
+            }
+            for contador in [*caso.contadores, *caso.contadores_por_caso]:
+                fila[contador] = int(sub[contador].fillna(0).sum())
+            fila.update(_promedios_de(caso, sub))
+            filas.append(fila)
+
+        # Las tablas complementarias aportan solo los casos que declaran.
+        for tabla in caso.complementarias:
+            foto = snapshot.complementarias.get(tabla.etiqueta)
+            if foto is None:
+                continue
+            for transversal in CASOS_TRANSVERSALES:
+                if transversal.numero not in tabla.criterios_casos:
+                    continue
+                columna, valores = tabla.criterios_casos[transversal.numero]
+                filas.append({
+                    "semana": snapshot.etiqueta,
+                    "caso_de_uso": transversal.etiqueta,
+                    "tabla": tabla.etiqueta,
+                    "criterio": _criterio(columna, valores),
+                    "cantidad": int(_filtrar(foto, columna, valores)[tabla.metrica].sum()),
+                })
+
+    tabla = pd.DataFrame(filas)
+    # Se resta solo contra la foto inmediatamente anterior de la serie. Si esa
+    # semana no tuvo foto de una complementaria, la variacion queda vacia en
+    # vez de restar contra una semana mas vieja.
+    anterior = {s.etiqueta: p.etiqueta for p, s in zip(ventana.serie, ventana.serie[1:])}
+    cantidades = tabla.set_index(["caso_de_uso", "tabla", "semana"])["cantidad"]
+    previo = [cantidades.get((f.caso_de_uso, f.tabla, anterior.get(f.semana))) for f in tabla.itertuples()]
+    variacion = tabla["cantidad"] - pd.Series(previo, index=tabla.index, dtype="Float64")
+    tabla.insert(5, "variacion_semana", variacion.round().astype("Int64"))
+    return tabla
+
+
+def _filtrar(df: pd.DataFrame, columna: str, valores) -> pd.DataFrame:
+    return df if valores is None else df[df[columna].isin(valores)]
+
+
+def _criterio(columna: str, valores) -> str:
+    return f"todas ({columna})" if valores is None else f"{columna}={'|'.join(valores)}"
+
+
 def a_csv(df: pd.DataFrame) -> str:
     return df.to_csv(index=False, float_format="%.1f")
 
@@ -188,6 +258,9 @@ def resumen_tablas(ventana: Ventana) -> dict:
     stock = estado(ventana)
     if stock is not None:
         tablas["estado"] = stock
+    por_caso = casos_de_uso(ventana)
+    if por_caso is not None:
+        tablas["casos_de_uso"] = por_caso
     return tablas
 
 

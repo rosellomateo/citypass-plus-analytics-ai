@@ -49,10 +49,14 @@ def test_modo_sin_llm_devuelve_las_cifras_y_lo_que_se_le_enviaria_al_modelo(
     assert metadata["semanas_comparadas"] == ["2026-W38"]
     assert metadata["snapshot_base"] == "2026-W37"
     assert metadata["avisos"] == []
+    # Las fotos de prueba no traen causaTipo (como las anteriores al esquema v2):
+    # los seis casos de uso quedan en 0 en vez de romper la corrida.
     assert metadata["cifras"] == {"altas_semana": 7, "acumulado_total": 26,
-                                  "abiertos": 17, "cerrados": 9, "descartados": 0}
+                                  "abiertos": 17, "cerrados": 9, "descartados": 0,
+                                  "casos_de_uso": {t.etiqueta: {"reclamos": 0} for t in casos.CASOS_TRANSVERSALES}}
     assert metadata["fuentes"] == [s.ruta for s in snapshots_reclamos]
-    assert metadata["filas_enviadas"] == 24  # 2 totales + 12 altas + 3 detalle + 7 estado
+    # 2 totales + 12 altas + 3 detalle + 7 estado + 12 casos de uso (6 por semana)
+    assert metadata["filas_enviadas"] == 36
 
 
 def test_con_el_llm_prendido_se_guarda_el_resumen_y_el_uso(caso_reclamos, snapshots_reclamos, llm_falso):
@@ -66,6 +70,16 @@ def test_con_el_llm_prendido_se_guarda_el_resumen_y_el_uso(caso_reclamos, snapsh
     assert len(llm_falso) == 1
     assert "Glosario de reclamos" in llm_falso[0]["system_prompt"]
     assert "Semana a analizar: 2026-W38" in llm_falso[0]["mensaje"]
+    assert "Tabla `casos_de_uso`" in llm_falso[0]["mensaje"]
+
+
+def test_queda_registrado_que_casos_de_uso_no_nombro_el_parrafo(caso_reclamos, snapshots_reclamos, llm_falso):
+    """RESUMEN_FALSO solo habla de reclamos: los otros cinco casos quedan marcados."""
+    entrada = pipeline.ejecutar(caso_reclamos, snapshots_reclamos, settings(usar_llm=True))
+
+    faltan = entrada["metadata"]["casos_sin_mencion"]
+    assert "Caso 2 - Reclamo ciudadano" not in faltan
+    assert len(faltan) == 5
 
 
 def test_se_puede_elegir_el_proveedor_anthropic(caso_reclamos, snapshots_reclamos, llm_falso):
