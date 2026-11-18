@@ -7,26 +7,30 @@ import pytest
 from analisis_semanal import casos, datos, metricas
 from conftest import FILAS_W37, FILAS_W38, df_reclamos, snapshot
 
-COLUMNAS_MOV = ["fechaInicio", "estacionInicio", "duracionViaje",
-                "cantidadViajes", "promDuracion", "duracionTotalViajes"]
-FILAS_MOV_W37 = [("2026-09-07", "Estacion Centro", "<15min", 10, 10.0, 100.0)]
-FILAS_MOV_W38 = [("2026-09-07", "Estacion Centro", "<15min", 10, 10.0, 100.0),
-                 ("2026-09-15", "Estacion Norte", "15-30min", 4, 20.0, 80.0)]
+COLUMNAS_MOV = ["causaTipo", "cantidadAfectaciones", "estacionesAfectadasDistintas",
+                "cantidadBloqueadas", "cantidadPreventivas", "cantidadRestauradas",
+                "cantidadViajesInterrumpidos"]
+FILAS_MOV_W37 = [("EVENTO_CLIMATICO", 5, 4, 3, 0, 1, 1),
+                 ("NORMAL", 0, 0, 0, 0, 0, 20)]
+FILAS_MOV_W38 = [("EVENTO_CLIMATICO", 7, 6, 5, 0, 2, 1),
+                 ("INCIDENTE_VIAL", 4, 4, 0, 0, 1, 3),
+                 ("NORMAL", 0, 0, 0, 0, 0, 26)]
 
-COLUMNAS_RES = ["zona", "tipoAlerta", "prioridad", "rangoNivelLlenado",
-                "cantidadAlertas", "cantidadResueltas", "tiempoPromResolucion"]
-FILAS_RES_W37 = [("Norte", "LLENO", "ALTA", "80-100", 10, 4, 6.0),
-                 ("Sur", "FALLA_SENSOR", "BAJA", None, 5, 0, None)]
-FILAS_RES_W38 = [("Norte", "LLENO", "ALTA", "80-100", 14, 6, 8.0),
-                 ("Sur", "FALLA_SENSOR", "BAJA", None, 5, 0, None)]
+COLUMNAS_EME = ["estado_actual", "prioridad", "categoria", "causaTipo", "afectaCirculacion",
+                "cantidadEmergencias", "criticidadAfectada",
+                "tiempoPromRespuestaDespacho", "tiempoPromRespuestaLugar"]
+FILAS_EME_W37 = [("RESUELTA", "ALTA", "INCENDIO", None, True, 10, 1, 6.0, 12.0),
+                 ("DESCARTADA", "BAJA", "OTRO", None, False, 5, 0, None, None)]
+FILAS_EME_W38 = [("RESUELTA", "ALTA", "INCENDIO", None, True, 14, 2, 8.0, 15.0),
+                 ("DESCARTADA", "BAJA", "OTRO", None, False, 5, 0, None, None)]
 
 
 def df_movilidad(filas) -> pd.DataFrame:
     return pd.DataFrame(filas, columns=COLUMNAS_MOV)
 
 
-def df_residuos(filas) -> pd.DataFrame:
-    return pd.DataFrame(filas, columns=COLUMNAS_RES)
+def df_emergencias(filas) -> pd.DataFrame:
+    return pd.DataFrame(filas, columns=COLUMNAS_EME)
 
 
 def ventana(caso, fotos) -> datos.Ventana:
@@ -155,48 +159,74 @@ def test_un_dominio_sin_estado_no_tiene_tabla_de_estado():
 
 
 def test_resumen_tablas_incluye_el_estado_cuando_corresponde(ventana_reclamos):
-    assert set(metricas.resumen_tablas(ventana_reclamos)) == {"totales", "altas", "altas_detalle", "estado"}
+    assert set(metricas.resumen_tablas(ventana_reclamos)) == {"totales", "altas", "altas_detalle", "estado",
+                                                              "casos_de_uso"}
 
 
 # --------------------------------------------------------------------------
 # Otros dominios: contadores y promedios sin dato
 # --------------------------------------------------------------------------
 
-def test_movilidad_lee_las_altas_con_la_fecha_en_el_grano():
+def test_movilidad_lee_las_altas_por_causa():
     movilidad = ventana(casos.MOVILIDAD, [(37, df_movilidad(FILAS_MOV_W37)),
                                           (38, df_movilidad(FILAS_MOV_W38))])
 
     altas = metricas.altas_detalladas(movilidad)
 
-    assert altas["altas"].sum() == 4
-    assert altas.iloc[0]["fechaInicio"] == "2026-09-15"
+    assert altas["altas"].sum() == 6       # +2 climaticas, +4 incidentes viales
+    por_causa = altas.set_index("causaTipo")["altas"]
+    assert por_causa["INCIDENTE_VIAL"] == 4
+    assert por_causa["EVENTO_CLIMATICO"] == 2
 
 
 def test_los_contadores_se_suman_y_se_informan_como_nivel():
-    residuos = ventana(casos.RESIDUOS, [(37, df_residuos(FILAS_RES_W37)),
-                                        (38, df_residuos(FILAS_RES_W38))])
+    movilidad = ventana(casos.MOVILIDAD, [(37, df_movilidad(FILAS_MOV_W37)),
+                                          (38, df_movilidad(FILAS_MOV_W38))])
 
-    fila = metricas.totales(residuos).iloc[-1]
+    fila = metricas.totales(movilidad).iloc[-1]
 
-    assert fila["acumulado_total"] == 19   # 14 + 5 alertas
-    assert fila["altas_semana"] == 4       # solo crecio la zona Norte
-    assert fila["cantidadResueltas"] == 6
+    assert fila["acumulado_total"] == 11   # 7 + 4 afectaciones (NORMAL no es una afectacion)
+    assert fila["altas_semana"] == 6
+    assert fila["cantidadBloqueadas"] == 5
+    assert fila["cantidadViajesInterrumpidos"] == 30
+
+
+def test_las_estaciones_distintas_no_se_suman_entre_causas():
+    """Son estaciones unicas por causa: sumarlas contaria dos veces la misma estacion."""
+    movilidad = ventana(casos.MOVILIDAD, [(37, df_movilidad(FILAS_MOV_W37)),
+                                          (38, df_movilidad(FILAS_MOV_W38))])
+
+    assert "estacionesAfectadasDistintas" not in metricas.totales(movilidad).columns
 
 
 def test_las_filas_sin_promedio_no_cuentan_como_cero():
-    """Las alertas de FALLA_SENSOR no tienen tiempo de resolucion: promediarlas
+    """Las emergencias descartadas no tienen tiempo de despacho: promediarlas
     como 0 hundiria el indicador. 8.0 es el promedio de las que si lo tienen."""
-    residuos = ventana(casos.RESIDUOS, [(37, df_residuos(FILAS_RES_W37)),
-                                        (38, df_residuos(FILAS_RES_W38))])
+    emergencias = ventana(casos.EMERGENCIAS, [(37, df_emergencias(FILAS_EME_W37)),
+                                              (38, df_emergencias(FILAS_EME_W38))])
 
-    assert metricas.totales(residuos).iloc[-1]["tiempoPromResolucion"] == pytest.approx(8.0)
+    fila = metricas.totales(emergencias).iloc[-1]
+
+    assert fila["tiempoPromRespuestaDespacho"] == pytest.approx(8.0)
+    assert fila["criticidadAfectada"] == 2
+    assert fila["cerrados"] == 14
+    assert fila["descartados"] == 5
+
+
+def test_un_promedio_que_gold_todavia_no_publica_informa_nulo():
+    """tiempoPromResolucion se sumo a gold despues: los snapshots viejos no lo traen."""
+    emergencias = ventana(casos.EMERGENCIAS, [(37, df_emergencias(FILAS_EME_W37)),
+                                              (38, df_emergencias(FILAS_EME_W38))])
+
+    assert metricas.totales(emergencias).iloc[-1]["tiempoPromResolucion"] is None
 
 
 def test_un_snapshot_sin_ningun_promedio_informa_nulo():
-    sin_dato = [("Norte", "LLENO", "ALTA", "80-100", 10, 0, None)]
-    residuos = ventana(casos.RESIDUOS, [(37, df_residuos(sin_dato)), (38, df_residuos(sin_dato))])
+    sin_dato = [("PENDIENTE", "ALTA", "INCENDIO", None, True, 10, 0, None, None)]
+    emergencias = ventana(casos.EMERGENCIAS, [(37, df_emergencias(sin_dato)),
+                                              (38, df_emergencias(sin_dato))])
 
-    assert metricas.totales(residuos).iloc[-1]["tiempoPromResolucion"] is None
+    assert metricas.totales(emergencias).iloc[-1]["tiempoPromRespuestaDespacho"] is None
 
 
 # --------------------------------------------------------------------------
@@ -232,3 +262,70 @@ def test_un_dominio_todavia_sin_datos_no_rompe(caso_reclamos):
     assert fila["altas_semana"] == 0
     assert fila["tiempo_prom_hasta_estado_actual"] is None
     assert metricas.altas_detalladas(vacia).empty
+
+
+# --------------------------------------------------------------------------
+# Casos de uso transversales (stock por causaTipo)
+# --------------------------------------------------------------------------
+
+COLUMNAS_ESP = ["estado_actual", "categoria", "causaTipo", "organizadorTipo", "barrio",
+                "cantidadActividades", "cantidadMasivas"]
+# Semana 37: 3 actividades programadas sin modificar.
+FILAS_ESP_W37 = [("PROGRAMADA", "CULTURAL", None, "CIUDAD", "Centro", 3, 1)]
+# Semana 38: una de esas 3 se cancelo por clima (cambia su causaTipo) y entro una nueva.
+FILAS_ESP_W38 = [("PROGRAMADA", "CULTURAL", None, "CIUDAD", "Centro", 2, 1),
+                 ("CANCELADA", "CULTURAL", "EVENTO_CLIMATICO", "CIUDAD", "Centro", 1, 0),
+                 ("PROGRAMADA", "CULTURAL", None, "CIUDADANO", "Norte", 1, 0)]
+
+
+def df_espacios(filas) -> pd.DataFrame:
+    return pd.DataFrame(filas, columns=COLUMNAS_ESP)
+
+
+@pytest.fixture
+def ventana_espacios():
+    return ventana(casos.ESPACIOS, [(37, df_espacios(FILAS_ESP_W37)), (38, df_espacios(FILAS_ESP_W38))])
+
+
+def test_un_cambio_de_causa_en_espacios_no_genera_altas_negativas(ventana_espacios):
+    """causaTipo de espacios es la causa de la ultima modificacion: si fuera
+    dimension, la actividad cancelada por clima restaria 1 del bucket sin causa."""
+    altas = metricas.altas_detalladas(ventana_espacios)
+
+    assert metricas.altas_negativas(altas) == 0
+    assert altas["altas"].sum() == 1
+
+
+def test_casos_de_uso_trae_las_seis_filas_por_semana_aunque_valgan_cero(ventana_espacios):
+    tabla = metricas.casos_de_uso(ventana_espacios)
+
+    assert len(tabla) == 12
+    assert set(tabla["caso_de_uso"]) == {t.etiqueta for t in casos.CASOS_TRANSVERSALES}
+
+
+def test_casos_de_uso_lee_el_stock_por_causa_y_su_variacion(ventana_espacios):
+    tabla = metricas.casos_de_uso(ventana_espacios).set_index(["semana", "caso_de_uso"])
+    clima = tabla.loc[("2026-W38", "Caso 1 - Evento climatico")]
+
+    assert clima["cantidad"] == 1
+    assert clima["variacion_semana"] == 1
+    assert pd.isna(tabla.loc[("2026-W37", "Caso 1 - Evento climatico"), "variacion_semana"])  # foto base
+
+
+def test_casos_de_uso_agrupa_las_causas_del_caso_5():
+    df = df_espacios([("CANCELADA", "CULTURAL", "ACCIDENTE_VIAL", "CIUDAD", "Centro", 2, 0)])
+    v = ventana(casos.ESPACIOS, [(37, df), (38, df)])
+
+    tabla = metricas.casos_de_uso(v).set_index(["semana", "caso_de_uso"])
+
+    assert tabla.loc[("2026-W38", "Caso 5 - Emergencia en bicicleta"), "cantidad"] == 2
+
+
+def test_una_foto_sin_columna_de_causa_queda_en_sin_dato():
+    """Las fotos anteriores a que gold publicara causaTipo no tiran la corrida."""
+    viejo = df_espacios(FILAS_ESP_W37).drop(columns=["causaTipo"])
+    v = ventana(casos.ESPACIOS, [(37, viejo), (38, df_espacios(FILAS_ESP_W38))])
+
+    tabla = metricas.casos_de_uso(v)
+
+    assert tabla[tabla["semana"] == "2026-W37"]["cantidad"].sum() == 0

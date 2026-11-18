@@ -2,7 +2,7 @@
 
 - **Módulo:** `citypass-plus-analytics-ai`
 - **Producto:** CityPass+ — plataforma de servicios ciudadanos
-- **Versión del esquema de salida:** 3.0
+- **Versión del esquema de salida:** 3.1
 
 ---
 
@@ -117,7 +117,7 @@ Cada semana, cada dominio produce una entrada con cuatro partes:
 
 | Parte | Contenido |
 |---|---|
-| **Párrafo ejecutivo** | Un único párrafo de 120 a 180 palabras: cómo fue la semana frente al histórico |
+| **Párrafo ejecutivo** | Un único párrafo de 150 a 230 palabras: cómo fue la semana frente al histórico, nombrando los seis casos de uso transversales |
 | **Puntos destacados** | 2 a 5 ítems de una oración, con cifras |
 | **Riesgos** | 1 a 5 ítems de una oración |
 | **Recomendaciones** | 2 a 5 acciones concretas que un área de gobierno pueda ejecutar |
@@ -141,6 +141,14 @@ El formato es siempre el mismo: el tablero sabe qué esperar y la lectura semana
 > **Recomendaciones:**
 > - Reforzar la cuadrilla de bacheo en Centro durante la próxima semana.
 > - Revisar los reclamos ALTA con más de 72 horas sin asignar.
+
+### Los seis casos de uso en el párrafo ejecutivo
+
+El párrafo de cada dominio menciona siempre, al menos una vez, los seis casos de uso transversales de
+CityPass+: evento climático, reclamo ciudadano, evento masivo, incidente vial, emergencia en bicicleta y
+reserva de espacio público. Para cada uno da la cifra del dominio o aclara que no tiene registros (o que el
+dato todavía no llega a la capa gold). Así una autoridad ve, en cualquier tablero, cómo repercutió cada caso
+en ese dominio, y un caso en cero también queda dicho.
 
 ### Reglas de redacción que respeta el resumen
 
@@ -171,30 +179,36 @@ Cada dominio tiene su propio vocabulario, y el módulo se lo explica al modelo p
 - El tiempo promedio son **horas** desde el ingreso hasta el estado en el que está cada reclamo.
 
 ### Emergencias y seguridad
-- Ciclo: PENDIENTE → VALIDADA → DESPACHADA → EN_CAMINO → EN_LUGAR → RESUELTA → CERRADA, con la rama
-  DESCARTADA para los avisos que no se confirman.
-- Dos tiempos, en **minutos**: hasta despachar el móvil y hasta llegar al lugar. En este dominio el tiempo
-  de respuesta es el indicador que importa, más que el volumen.
-- La prioridad es ALTA, MEDIA o BAJA (no existe CRITICA).
+- Ciclo: PENDIENTE → VALIDADA → DESPACHADA → EN_CAMINO → EN_LUGAR → RESUELTA → CERRADA, con las ramas
+  DESCARTADA (avisos que no se confirman) y CANCELADA.
+- `causaTipo` dice qué la originó en otro dominio (reclamo, evento climático, incidente vial, evento
+  público o evento de ciudadanos); `afectaCirculacion` marca las que afectan el tránsito y la categoría
+  PREVENTIVA, los servicios enviados de forma preventiva.
+- Tiempos en **minutos**: hasta despachar el móvil y hasta llegar al lugar (por prioridad), y hasta
+  resolverla (por causa). En este dominio el tiempo de respuesta es el indicador que importa.
+- La prioridad es CRITICA, ALTA, MEDIA o BAJA. Valores fuera de esos enums se reportan como problema de
+  calidad de datos.
 
 ### Movilidad urbana
-- Los viajes **en curso** (todavía sin evento de fin) no entran en la tabla hasta que terminan: aparecen
-  recién en la foto siguiente.
-- La duración se agrupa en franjas: <15min, 15-30min, 30-60min y >60min.
-- A diferencia de los otros dominios, la fecha del viaje está en el grano, así que se puede leer la
-  actividad día por día.
+- Una fila por causa de afectación de estaciones: evento climático, reclamo, evento público, incidente
+  vial, emergencia o evento de ciudadanos.
+- Se cuentan afectaciones, bloqueos, afectaciones preventivas (anunciadas antes de empezar), estaciones
+  restauradas y viajes interrumpidos.
+- La fila NORMAL no es una afectación: son los viajes finalizados sin incidente, la base contra la que se
+  comparan los interrumpidos.
 
 ### Espacios públicos y cultura
-- `ESPACIO` es la reserva de un lugar físico; `EVENTO` es una inscripción a una actividad.
-- Confirmadas y canceladas son acumulados sobre el total de reservas de cada recurso: la diferencia entre
-  el total y la suma de ambas son las que siguen pendientes.
-- El % de ocupación solo aplica a los recursos con cupo máximo definido.
+- Actividades (eventos públicos) por estado, categoría, causa de la última modificación, organizador
+  (ciudad o ciudadano) y barrio.
+- SUSPENDIDA no es definitivo (la actividad puede volver a programarse); CANCELADA sí.
+- Se cuentan eventos masivos (500 personas o más), actividades afectadas por clima y cuántas veces se
+  modificaron por cada causa.
 
 ### Gestión de residuos
-- Tipos de alerta: LLENO, FALLA_SENSOR, VOLCADO e INCENDIO.
-- Una alerta se considera **resuelta** cuando llega la recolección correspondiente; el tiempo de
-  resolución son las **horas** hasta esa recolección.
-- El rango de nivel de llenado viene vacío en las alertas de FALLA_SENSOR, porque no hay lectura del sensor.
+- Una intervención es una parada de una cuadrilla de recolección, agrupada por estado y por la causa que
+  la originó (reclamo, evento público, reserva o emergencia).
+- PROGRAMADA es una intervención pendiente; AFECTADA, una que no se pudo hacer como estaba planificada
+  (tormenta, corte de calle); COMPLETADA y CANCELADA la cierran.
 
 ---
 

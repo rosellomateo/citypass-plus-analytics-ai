@@ -95,6 +95,15 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
         df[columna] = df[columna].astype("string").fillna(SIN_DATO).astype(str)
     df[caso.metrica] = pd.to_numeric(df[caso.metrica]).fillna(0).astype("int64")
 
+    # La causa es opcional cuando no es dimension: los snapshots anteriores a
+    # que gold la publicara no la traen, y eso no tiene que tirar la corrida.
+    causa = []
+    if caso.columna_causa and caso.columna_causa not in caso.dimensiones_todas:
+        causa = [caso.columna_causa]
+        if caso.columna_causa not in df.columns:
+            df[caso.columna_causa] = SIN_DATO
+        df[caso.columna_causa] = df[caso.columna_causa].astype("string").fillna(SIN_DATO).astype(str)
+
     opcionales = [*caso.promedios, *caso.contadores]
     for columna in opcionales:
         df[columna] = pd.to_numeric(df.get(columna), errors="coerce")
@@ -102,7 +111,7 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
         if columna not in df.columns:
             df[columna] = pd.NA
 
-    return df[[*caso.dimensiones_todas, caso.metrica, *dict.fromkeys(opcionales)]]
+    return df[[*caso.dimensiones_todas, *causa, caso.metrica, *dict.fromkeys(opcionales)]]
 
 
 def construir_snapshot(caso: CasoDeUso, ruta: str, df: pd.DataFrame) -> Snapshot:

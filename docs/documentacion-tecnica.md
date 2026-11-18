@@ -49,7 +49,7 @@ gold/<dominio>/<base>_<WW>_<YYYY>.parquet   (una foto acumulada por semana)
   casos.py      qué dimensiones, qué métrica y qué estados tiene el dominio
   datos.py      descubre y fecha los snapshots, arma la ventana
   metricas.py   altas = foto − foto anterior; stock por estado; totales
-        │  3 o 4 tablas en CSV
+        │  4 o 5 tablas en CSV
         ▼
   prompts.py    system prompt por dominio + mensaje con las tablas
   llm_*.py      LLM con structured outputs (Pydantic)
@@ -244,9 +244,9 @@ Un blob Parquet por dominio y semana, bajo el prefijo del dominio dentro del con
 ```
 gold/Reclamos/reclamos_resumen_38_2026.parquet
 gold/Emergencias y Seguridad/emergencias_resumen_38_2026.parquet
-gold/Movilidad Urbana/viajes_resumen_38_2026.parquet
-gold/Espacios Publicos y Cultura/reservas_resumen_38_2026.parquet
-gold/Gestion de Residuos Inteligente/alertas_resumen_38_2026.parquet
+gold/Movilidad Urbana/movilidad_resumen_38_2026.parquet
+gold/Espacios Publicos y Cultura/actividades_resumen_38_2026.parquet
+gold/Gestion de Residuos Inteligente/intervenciones_resumen_38_2026.parquet
 ```
 
 El patrón que reconoce el módulo es `<base_archivo>_<WW>_<YYYY>.parquet`, case-insensitive, con 1 o 2
@@ -257,10 +257,13 @@ Columnas esperadas por dominio:
 | Dominio | Métrica | Dimensiones | Estado | Promedios (peso) | Contadores |
 |---|---|---|---|---|---|
 | reclamos | `row_count` | barrio, categoria, prioridad, origenClasificacion | `estado_actual` | `tiempo_prom_hasta_estado_actual` (`row_count`) | — |
-| emergencias | `cantidadEmergencias` | prioridad | `estado_actual` | `tiempoPromRespuestaDespacho`, `tiempoPromRespuestaLugar` (`cantidadEmergencias`) | — |
-| movilidad | `cantidadViajes` | fechaInicio, estacionInicio, duracionViaje | — | `promDuracion` (`cantidadViajes`) | `duracionTotalViajes` |
-| espacios | `cantidadTotal` | recursoId, tipoReserva, categoria, zona | — | `pctOcupacion` (`cantidadTotal`) | `cantidadConfirmadas`, `cantidadCanceladas`, `inscriptos` |
-| residuos | `cantidadAlertas` | zona, tipoAlerta, prioridad, rangoNivelLlenado | — | `tiempoPromResolucion` (`cantidadResueltas`) | `cantidadResueltas` |
+| emergencias | `cantidadEmergencias` | prioridad, categoria, causaTipo, afectaCirculacion | `estado_actual` | `tiempoPromRespuestaDespacho`, `tiempoPromRespuestaLugar`, `tiempoPromResolucion` (`cantidadEmergencias`) | `criticidadAfectada` |
+| movilidad | `cantidadAfectaciones` | causaTipo | — | — | `cantidadBloqueadas`, `cantidadPreventivas`, `cantidadRestauradas`, `cantidadViajesInterrumpidos` |
+| espacios | `cantidadActividades` | categoria, causaTipo, organizadorTipo, barrio | `estado_actual` | — | `cantidadMasivas`, `cantidadAfectadasPorClima`, `totalVecesEventoClimatico`, `totalVecesReclamo`, `totalVecesIncidenteVial`, `totalVecesAccidenteVial` |
+| residuos | `cantidadIntervenciones` | causaTipo | `estado_actual` | — | — |
+
+Los promedios y contadores son opcionales: si un snapshot no trae la columna (por ejemplo, uno anterior a
+que gold la agregara) se informa como nulo en vez de fallar.
 
 Columna opcional `fecha_snapshot`: si está, se usa como fecha de corte (y como fallback para fechar la
 semana si el nombre del blob no la trae).
@@ -317,7 +320,7 @@ entre fotos; si no, diferencia de semana distinta de 1 dentro del mismo año.
 
 ### 5.4 Las tablas que recibe el modelo
 
-`metricas.resumen_tablas(ventana)` devuelve 3 o 4 DataFrames, que se serializan a CSV.
+`metricas.resumen_tablas(ventana)` devuelve 4 o 5 DataFrames, que se serializan a CSV. La quinta, `casos_de_uso`, es el stock por caso de uso transversal (según `CasoDeUso.columna_causa`), con las seis filas por semana aunque valgan 0 y `variacion_semana` como neto contra la foto anterior.
 
 **`totales`** — una fila por semana de la ventana (incluida la base):
 
@@ -383,7 +386,7 @@ promediarla como 0 hundiría el indicador. Queda fuera del denominador.
 ```jsonc
 {
   "caso_de_uso": "reclamos",
-  "version_esquema": "3.0",
+  "version_esquema": "3.1",
   "actualizado_en": "2026-09-21T10:00:12+00:00",
   "ultima_semana": "2026-W38",
   "semanas": ["2026-W37", "2026-W38"],
@@ -398,7 +401,7 @@ promediarla como 0 hundiría el indicador. Queda fuera del denominador.
         "recomendaciones": ["…"]
       },
       "metadata": {
-        "version_esquema": "3.0",
+        "version_esquema": "3.1",
         "caso_de_uso": "reclamos",
         "semana_actual": "2026-W38",
         "semanas_comparadas": ["2026-W32", "…", "2026-W38"],
@@ -481,7 +484,7 @@ informa en la metadata **y** se le avisa al modelo.
 ### `prompts.py`
 
 `system_prompt(caso)` arma cuatro bloques: encabezado (rol, de dónde salen los datos, qué es un stock),
-descripción de las 3 o 4 tablas, glosario del dominio y reglas de lectura. `mensaje_usuario(...)` arma el
+descripción de las 4 o 5 tablas, glosario del dominio y reglas de lectura. `mensaje_usuario(...)` arma el
 mensaje con la ventana, los avisos y las tablas en bloques CSV.
 
 Cómo está compuesto y por qué cada pieza está donde está: **sección 8**. En resumen, las reglas de
@@ -498,7 +501,7 @@ lectura son defensas contra errores típicos de un LLM sobre datos acumulados:
 
 ```python
 class ResumenEjecutivo(BaseModel):
-    parrafo_ejecutivo: str      # 120-180 palabras
+    parrafo_ejecutivo: str      # 150-230 palabras, nombra los 6 casos de uso
     puntos_destacados: list[str]
     riesgos: list[str]
     recomendaciones: list[str]
@@ -588,7 +591,7 @@ donde está**.
 | Pieza | Función | Contenido | Cambia cuando |
 |---|---|---|---|
 | **System prompt** | Cómo leer y cómo escribir | Rol, origen de los datos, contrato de las tablas, glosario del dominio, reglas de comparación, estilo | Cambia el dominio |
-| **Mensaje de usuario** | Qué mirar esta semana | Semana analizada, semanas previas, avisos de la corrida, las 3 o 4 tablas en CSV | Cada semana |
+| **Mensaje de usuario** | Qué mirar esta semana | Semana analizada, semanas previas, avisos de la corrida, las 4 o 5 tablas en CSV | Cada semana |
 
 La separación no es decorativa. **Todo lo que no depende de la corrida está en el system prompt**, así que
 el prompt de un dominio es byte a byte el mismo todas las semanas: cualquier diferencia entre dos resúmenes
@@ -712,7 +715,7 @@ esquema:
 
 ```python
 parrafo_ejecutivo: str = Field(
-    description="Un único párrafo de 120 a 180 palabras: cómo fue la última semana frente al histórico, "
+    description="Un único párrafo de 150 a 230 palabras: cómo fue la última semana frente al histórico, "
                 "integrando lo más importante de los puntos destacados, riesgos y recomendaciones.")
 puntos_destacados: list[str] = Field(description="2 a 5 ítems, una oración cada uno, con cifras cuando aplique.")
 riesgos: list[str] = Field(description="1 a 5 ítems, una oración cada uno.")
@@ -783,12 +786,13 @@ De dónde salen los datos: la capa gold archiva todos los domingos una foto ACUM
 Las altas semanales ya fueron calculadas restando cada foto contra la anterior, así que no tenés que
 restar nada, usá las cifras como vienen.
 
-Recibís cuatro tablas en CSV:
+Recibís cinco tablas en CSV:
 1. totales: una fila por semana. `altas_semana` son las altas de reclamos de esa semana; `acumulado_total`
    y el resto de las columnas son el stock al cierre del domingo.
 2. altas: las altas de cada semana abiertas de a una dimensión por vez […]
 3. altas_detalle: el cruce completo de dimensiones, solo de la semana analizada […]
 4. estado: el stock al cierre de cada semana por estado (y prioridad cuando aplica).
+5. casos_de_uso: el stock de cada uno de los seis casos de uso transversales de CityPass+ […]
 
 Glosario de reclamos:
 - Cada fila es una combinacion de barrio, categoria, prioridad, origen de clasificacion y estado actual.
@@ -865,7 +869,7 @@ exactamente eso para que no se lea como una semana sin actividad.
 | `metadata.filas_enviadas` | Cuántas filas recibió el modelo en esa corrida; la señal de que el prompt está creciendo |
 | `metadata.llm.input_tokens` | El costo real del prompt, por corrida y por dominio |
 | `SEMANAS_HISTORIA` | Palanca directa sobre el tamaño del prompt, sin deploy |
-| `tests/test_prompts.py` | Verifica que el prompt tenga las piezas: glosario del dominio, 3 o 4 tablas, avisos, encuadre |
+| `tests/test_prompts.py` | Verifica que el prompt tenga las piezas: glosario del dominio, 4 o 5 tablas, regla de los 6 casos de uso, avisos, encuadre |
 | `VERSION_ESQUEMA` | Queda en cada entrada del historial: permite saber con qué versión del pipeline se generó un resumen |
 
 El flujo para cambiar el prompt es: editar `prompts.py` (o el glosario del dominio) → correr con
@@ -1061,7 +1065,7 @@ python -m pytest --cov=analisis_semanal --cov=function_app --cov-report=term-mis
 | `test_config.py` | 9 | Defaults, `CASOS`, `USAR_LLM`, variable en blanco = ausente |
 | `test_datos.py` | 21 | Qué blob es un snapshot (la foto mutable se ignora), normalización, ventana, saltos |
 | `test_metricas.py` | 21 | Las cuentas, verificadas a mano: altas, promedios ponderados, estado, contadores |
-| `test_prompts.py` | 6 | 3 o 4 tablas según el dominio; avisos en el mensaje |
+| `test_prompts.py` | 11 | 4 o 5 tablas según el dominio; regla y control de los 6 casos de uso; avisos en el mensaje |
 | `test_pipeline.py` | 12 | Metadata y cifras, `SEMANA_OBJETIVO`, avisos, historial sin duplicados |
 | `test_llm.py` | 13 | Armado del pedido por proveedor y las tres fallas de la sección 9 |
 | `test_blob_io.py` | 13 | Lectura de gold, `(None, None)` si no existe, ETag que no pisa |

@@ -10,6 +10,7 @@ resumen ejecutivo.
 - altas:         altas de cada semana abiertas de a una dimension por vez.
 - altas_detalle: el cruce completo, solo de la semana analizada y acotado a las mas grandes.
 - estado:        como quedo el stock por estado al cierre (solo si el dominio tiene estado).
+- casos_de_uso:  stock de cada uno de los seis casos de uso transversales (por causaTipo).
 
 Las marginales en vez del cruce completo son a proposito: con decenas de altas
 repartidas en varias dimensiones casi todas las combinaciones valen 1, y esas
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .casos import CasoDeUso
+from .casos import CASOS_TRANSVERSALES, CasoDeUso
 from .datos import Snapshot, Ventana
 
 
@@ -175,6 +176,41 @@ def totales(ventana: Ventana) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def casos_de_uso(ventana: Ventana):
+    """Stock de cada caso de uso transversal al cierre de cada semana.
+
+    Siempre trae las seis filas por semana, aunque valgan 0: un caso sin
+    registros en el dominio tambien es algo que el resumen tiene que decir.
+    Es stock y no altas porque la causa puede cambiar despues del alta
+    (espacios); `variacion_semana` es el neto contra la foto anterior.
+    None si el dominio no tiene columna de causa.
+    """
+    caso = ventana.caso
+    if not caso.columna_causa:
+        return None
+
+    filas = []
+    for snapshot in ventana.serie:
+        datos_ = snapshot.datos
+        for transversal in CASOS_TRANSVERSALES:
+            sub = datos_[datos_[caso.columna_causa].isin(transversal.causas)]
+            fila = {
+                "semana": snapshot.etiqueta,
+                "caso_de_uso": transversal.etiqueta,
+                "causaTipo": "|".join(transversal.causas),
+                "cantidad": int(sub[caso.metrica].sum()),
+            }
+            for contador in caso.contadores:
+                fila[contador] = int(sub[contador].fillna(0).sum())
+            fila.update(_promedios_de(caso, sub))
+            filas.append(fila)
+
+    tabla = pd.DataFrame(filas)
+    previo = tabla.groupby("caso_de_uso")["cantidad"].shift(1)
+    tabla.insert(4, "variacion_semana", (tabla["cantidad"] - previo).astype("Int64"))
+    return tabla
+
+
 def a_csv(df: pd.DataFrame) -> str:
     return df.to_csv(index=False, float_format="%.1f")
 
@@ -188,6 +224,9 @@ def resumen_tablas(ventana: Ventana) -> dict:
     stock = estado(ventana)
     if stock is not None:
         tablas["estado"] = stock
+    por_caso = casos_de_uso(ventana)
+    if por_caso is not None:
+        tablas["casos_de_uso"] = por_caso
     return tablas
 
 

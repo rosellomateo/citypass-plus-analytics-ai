@@ -9,7 +9,7 @@ from . import datos, metricas, prompts
 from .casos import CasoDeUso
 from .config import Settings
 
-VERSION_ESQUEMA = "3.0"
+VERSION_ESQUEMA = "3.1"
 
 
 def _avisos(ventana: datos.Ventana) -> list[str]:
@@ -51,6 +51,10 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
     for columna in ("abiertos", "cerrados", "descartados", *caso.contadores):
         if columna in fila_actual:
             cifras[columna] = int(fila_actual[columna])
+    if "casos_de_uso" in tablas:
+        por_caso = tablas["casos_de_uso"]
+        por_caso = por_caso[por_caso["semana"] == ventana.actual.etiqueta]
+        cifras["casos_de_uso"] = {fila.caso_de_uso: int(fila.cantidad) for fila in por_caso.itertuples()}
 
     entrada = {
         "semana": ventana.actual.etiqueta,
@@ -85,6 +89,10 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
     resumen, uso = generar_resumen(mensaje, settings, prompts.system_prompt(caso))
     entrada["resumen"] = resumen.model_dump()
     entrada["metadata"]["llm"] = uso
+    if caso.columna_causa:
+        # Queda registrado si el modelo se salteo la regla de nombrar los seis
+        # casos de uso; el tablero o quien audite lo puede ver sin leer el texto.
+        entrada["metadata"]["casos_sin_mencion"] = prompts.casos_sin_mencion(resumen.parrafo_ejecutivo)
     return entrada
 
 

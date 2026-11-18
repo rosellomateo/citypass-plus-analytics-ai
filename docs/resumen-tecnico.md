@@ -20,7 +20,7 @@ Timer (lunes 07:00 ART)
 gold/<dominio>/<base>_<WW>_<YYYY>.parquet        ← 9 fotos semanales por dominio
    │
    ├─ 1. seleccionar ventana        datos.py      8 semanas + la foto base
-   ├─ 2. altas = foto − anterior    metricas.py   3 o 4 tablas en CSV
+   ├─ 2. altas = foto − anterior    metricas.py   4 o 5 tablas en CSV
    ├─ 3. armar el prompt            prompts.py    system prompt por dominio
    ├─ 4. llamar al LLM              llm_*.py      structured output (Pydantic)
    └─ 5. acumular y escribir        blob_io.py    con ETag
@@ -81,13 +81,15 @@ diccionario `CASOS` de `casos.py`: no se toca ningún otro módulo.
 
 ## Lo que recibe y devuelve el modelo
 
-**Recibe** 3 o 4 tablas en CSV, ya calculadas:
+**Recibe** 4 o 5 tablas en CSV, ya calculadas:
 
 - `totales` — una fila por semana: altas, acumulado, stock por estado y promedios.
 - `altas` — altas por semana abiertas de a una dimensión por vez (marginales, para no gastar tokens en
   combinaciones que valen 1).
 - `altas_detalle` — el cruce completo, solo de la semana analizada y solo las combinaciones más grandes.
 - `estado` — stock por estado y prioridad (solo dominios con columna de estado).
+- `casos_de_uso` — stock de cada uno de los 6 casos de uso transversales (por `causaTipo`). El párrafo
+  ejecutivo tiene que nombrar los seis al menos una vez.
 
 Más el system prompt del dominio (glosario + reglas de lectura: el acumulado siempre sube, los promedios
 son un nivel, `SIN_DATO` es un faltante, toda cifra sale de las tablas).
@@ -102,7 +104,7 @@ es un error explícito: ese dominio queda sin análisis esa semana en vez de esc
 |---|---|---|
 | **System prompt** | Rol y audiencia, qué es una foto acumulada, el contrato de las tablas, el **glosario del dominio** y las reglas de comparación | Cambia el dominio |
 | **Mensaje de usuario** | La semana a analizar, las previas, los avisos de la corrida y las tablas en CSV | Cada semana |
-| **Esquema Pydantic** | El formato de la respuesta: cuatro campos, con los rangos ("2 a 5 ítems", "120-180 palabras") en las descripciones | Casi nunca |
+| **Esquema Pydantic** | El formato de la respuesta: cuatro campos, con los rangos ("2 a 5 ítems", "150-230 palabras", "nombrar los 6 casos de uso") en las descripciones | Casi nunca |
 
 Las cinco decisiones que lo definen:
 
