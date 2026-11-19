@@ -86,28 +86,18 @@ def _df_movilidad(afectaciones: int) -> "pd.DataFrame":
                          "cantidadViajesInterrumpidos": [1, 30]})
 
 
-def test_movilidad_lee_la_tabla_con_el_nombre_nuevo_y_el_viejo(cliente_falso):
-    """Gold paso de movilidad_resumen a viajes_resumen: la serie no se corta,
-    y si una semana esta con los dos nombres gana el nuevo."""
+def test_movilidad_lee_solo_viajes_resumen(cliente_falso):
+    """La tabla de Movilidad en gold es viajes_resumen; movilidad_resumen
+    (el nombre viejo) y la foto diaria no se leen."""
     gold = cliente_falso.contenedor("gold", existe=True)
     gold.cargar_parquet("Movilidad Urbana/movilidad_resumen_45_2026.parquet", _df_movilidad(3))
-    gold.cargar_parquet("Movilidad Urbana/movilidad_resumen_46_2026.parquet", _df_movilidad(4))
     gold.cargar_parquet("Movilidad Urbana/viajes_resumen_46_2026.parquet", _df_movilidad(5))
     gold.cargar_parquet("Movilidad Urbana/viajes_resumen.parquet", _df_movilidad(9))
 
     snapshots = blob_io.leer_snapshots(cliente_falso, "gold", casos.MOVILIDAD)
 
-    assert [(s.etiqueta, s.total) for s in snapshots] == [("2026-W45", 3), ("2026-W46", 5)]
-    assert snapshots[-1].ruta.endswith("viajes_resumen_46_2026.parquet")
-
-
-def test_movilidad_sin_snapshots_nombra_los_dos_archivos(cliente_falso):
-    cliente_falso.contenedor("gold", existe=True)
-
-    with pytest.raises(FileNotFoundError) as error:
-        blob_io.leer_snapshots(cliente_falso, "gold", casos.MOVILIDAD)
-
-    assert "viajes_resumen o movilidad_resumen" in str(error.value)
+    assert [(s.etiqueta, s.total) for s in snapshots] == [("2026-W46", 5)]
+    assert snapshots[0].ruta.endswith("viajes_resumen_46_2026.parquet")
 
 
 def test_residuos_acepta_la_causa_renombrada_en_gold(cliente_falso):

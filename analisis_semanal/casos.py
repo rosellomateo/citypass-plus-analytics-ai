@@ -63,17 +63,9 @@ class CasoDeUso:
     # cifras a casos_de_uso (no a las altas)
     complementarias: tuple["TablaComplementaria", ...] = ()
     glosario: str = ""
-    # nombres anteriores de la tabla principal en gold: sus snapshots se leen
-    # como parte de la misma serie (si una semana esta con los dos nombres,
-    # gana base_archivo).
-    bases_anteriores: tuple[str, ...] = ()
     # columna como la publica gold -> nombre que usa este caso (gold renombra
     # columnas y los snapshots viejos traen el nombre anterior).
     renombres: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def bases(self) -> tuple[str, ...]:
-        return (self.base_archivo, *self.bases_anteriores)
 
     @property
     def columnas_criterio(self) -> list[str]:
@@ -160,10 +152,8 @@ una categoria real.""",
 MOVILIDAD = CasoDeUso(
     nombre="movilidad",
     prefijo="Movilidad Urbana/",
-    # Gold paso a llamar viajes_resumen a esta tabla (misma estructura). Se
-    # siguen leyendo los snapshots con el nombre viejo para no cortar la serie.
+    # Afectaciones de estaciones por causa (antes movilidad_resumen).
     base_archivo="viajes_resumen",
-    bases_anteriores=("movilidad_resumen",),
     metrica="cantidadAfectaciones",
     etiqueta_metrica="afectaciones de estaciones",
     dimensiones=["causaTipo"],
