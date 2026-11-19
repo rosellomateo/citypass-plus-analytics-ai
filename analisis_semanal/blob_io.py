@@ -38,13 +38,21 @@ def leer_snapshots(cliente: BlobServiceClient, contenedor: str, caso: CasoDeUso,
     """
     prefijo = prefijo or caso.prefijo
     container = cliente.get_container_client(contenedor)
-    nombres = sorted(
-        b.name for b in container.list_blobs(name_starts_with=prefijo) if datos.es_snapshot(caso, b.name)
-    )
+    por_semana: dict[tuple[int, int], str] = {}
+    for blob in container.list_blobs(name_starts_with=prefijo):
+        semana = datos.semana_de_nombre(caso, blob.name)
+        if semana is None:
+            continue
+        # Si la tabla cambio de nombre y una semana quedo guardada con los
+        # dos, se usa la del nombre actual.
+        previo = por_semana.get(semana)
+        if previo is None or datos.base_de_nombre(caso, blob.name) == caso.base_archivo:
+            por_semana[semana] = blob.name
+    nombres = sorted(por_semana.values())
     if not nombres:
         raise FileNotFoundError(
             f"No hay snapshots semanales en {contenedor}/{prefijo} "
-            f"(se esperan archivos {caso.base_archivo}_<semana>_<anio>.parquet)"
+            f"(se esperan archivos {' o '.join(caso.bases)}_<semana>_<anio>.parquet)"
         )
 
     snapshots = []

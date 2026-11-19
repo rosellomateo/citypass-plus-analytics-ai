@@ -26,8 +26,16 @@ SIN_DATO = "SIN_DATO"
 
 
 def patron(caso: CasoDeUso) -> re.Pattern:
-    """<base>_<semana>_<anio>.parquet, ej. reclamos_resumen_38_2026.parquet."""
-    return re.compile(rf"{re.escape(caso.base_archivo)}_(\d{{1,2}})_(\d{{4}})\.parquet$", re.IGNORECASE)
+    """<base>_<semana>_<anio>.parquet, ej. reclamos_resumen_38_2026.parquet.
+    Acepta tambien los nombres anteriores de la tabla (caso.bases_anteriores)."""
+    bases = "|".join(re.escape(b) for b in caso.bases)
+    return re.compile(rf"(?:^|/)(?:{bases})_(\d{{1,2}})_(\d{{4}})\.parquet$", re.IGNORECASE)
+
+
+def base_de_nombre(caso: CasoDeUso, ruta: str) -> str | None:
+    """Con que nombre de tabla (actual o anterior) esta guardado el snapshot."""
+    nombre = ruta.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return next((b for b in caso.bases if nombre.startswith(f"{b.lower()}_")), None)
 
 
 def etiqueta_semana(anio: int, semana: int) -> str:
@@ -37,7 +45,7 @@ def etiqueta_semana(anio: int, semana: int) -> str:
 def semana_de_nombre(caso: CasoDeUso, ruta: str) -> tuple[int, int] | None:
     """(anio, semana) segun el nombre del blob, o None si no es un snapshot."""
     nombre = ruta.replace("\\", "/").rsplit("/", 1)[-1]
-    match = patron(caso).search(nombre)
+    match = patron(caso).search("/" + nombre)
     if match is None:
         return None
     return int(match.group(2)), int(match.group(1))
@@ -88,6 +96,10 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
     una fila a descartar: si quedara como NaN, el groupby lo tiraria y las
     restas entre fotos no cerrarian.
     """
+    renombres = {viejo: nuevo for viejo, nuevo in caso.renombres.items()
+                 if viejo in df.columns and nuevo not in df.columns}
+    if renombres:
+        df = df.rename(columns=renombres)
     requeridas = [*caso.dimensiones_todas, caso.metrica]
     faltan = [c for c in requeridas if c not in df.columns]
     if faltan:
@@ -131,7 +143,7 @@ def normalizar_complementaria(tabla: TablaComplementaria, df: pd.DataFrame) -> p
 def ruta_complementaria(caso: CasoDeUso, tabla: TablaComplementaria, ruta: str) -> str:
     """Misma carpeta y misma semana que la foto principal, otra base de archivo."""
     carpeta, _, nombre = ruta.rpartition("/")
-    nuevo = nombre.replace(caso.base_archivo, tabla.base_archivo, 1)
+    nuevo = nombre.replace(base_de_nombre(caso, nombre) or caso.base_archivo, tabla.base_archivo, 1)
     return f"{carpeta}/{nuevo}" if carpeta else nuevo
 
 
