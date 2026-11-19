@@ -79,6 +79,44 @@ def test_un_dominio_sin_snapshots_falla_con_el_nombre_esperado(cliente_falso, ca
     assert "reclamos_resumen" in str(error.value)
 
 
+def _df_movilidad(afectaciones: int) -> "pd.DataFrame":
+    import pandas as pd
+    return pd.DataFrame({"causaTipo": ["EVENTO_CLIMATICO", "NORMAL"],
+                         "cantidadAfectaciones": [afectaciones, 0],
+                         "cantidadViajesInterrumpidos": [1, 30]})
+
+
+def test_movilidad_lee_solo_viajes_resumen(cliente_falso):
+    """La tabla de Movilidad en gold es viajes_resumen; movilidad_resumen
+    (el nombre viejo) y la foto diaria no se leen."""
+    gold = cliente_falso.contenedor("gold", existe=True)
+    gold.cargar_parquet("Movilidad Urbana/movilidad_resumen_45_2026.parquet", _df_movilidad(3))
+    gold.cargar_parquet("Movilidad Urbana/viajes_resumen_46_2026.parquet", _df_movilidad(5))
+    gold.cargar_parquet("Movilidad Urbana/viajes_resumen.parquet", _df_movilidad(9))
+
+    snapshots = blob_io.leer_snapshots(cliente_falso, "gold", casos.MOVILIDAD)
+
+    assert [(s.etiqueta, s.total) for s in snapshots] == [("2026-W46", 5)]
+    assert snapshots[0].ruta.endswith("viajes_resumen_46_2026.parquet")
+
+
+def test_residuos_acepta_la_causa_renombrada_en_gold(cliente_falso):
+    import pandas as pd
+    gold = cliente_falso.contenedor("gold", existe=True)
+    viejo = pd.DataFrame({"causaTipo": ["RECLAMO"], "estado_actual": ["PROGRAMADA"],
+                          "cantidadIntervenciones": [2]})
+    nuevo = pd.DataFrame({"causaProgramacion": ["RECLAMO", "EVENTO_PUBLICO"],
+                          "estado_actual": ["PROGRAMADA", "PROGRAMADA"],
+                          "cantidadIntervenciones": [3, 4]})
+    gold.cargar_parquet("Gestion de Residuos Inteligente/intervenciones_resumen_46_2026.parquet", viejo)
+    gold.cargar_parquet("Gestion de Residuos Inteligente/intervenciones_resumen_47_2026.parquet", nuevo)
+
+    snapshots = blob_io.leer_snapshots(cliente_falso, "gold", casos.RESIDUOS)
+
+    causas = snapshots[-1].datos.groupby("causaTipo")["cantidadIntervenciones"].sum().to_dict()
+    assert causas == {"EVENTO_PUBLICO": 4, "RECLAMO": 3}
+
+
 # --------------------------------------------------------------------------
 # Historial
 # --------------------------------------------------------------------------

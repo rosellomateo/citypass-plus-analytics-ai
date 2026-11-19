@@ -114,11 +114,18 @@ def test_semana_objetivo_inexistente_lista_las_disponibles(caso_reclamos, snapsh
     assert "2026-W37" in str(error.value) and "2026-W38" in str(error.value)
 
 
-def test_un_solo_snapshot_no_alcanza_para_comparar(caso_reclamos):
+def test_un_solo_snapshot_arma_una_ventana_sin_comparacion(caso_reclamos):
     serie = [snapshot(caso_reclamos, 38, df_reclamos(FILAS_W38))]
 
-    with pytest.raises(ValueError, match="al menos 2"):
-        datos.seleccionar_ventana(serie, None, semanas_historia=8)
+    ventana = datos.seleccionar_ventana(serie, None, semanas_historia=8)
+
+    assert ventana.sin_comparacion
+    assert ventana.actual.etiqueta == "2026-W38"
+    assert ventana.semanas == ["2026-W38"]
+
+
+def test_con_dos_snapshots_hay_comparacion(caso_reclamos, snapshots_reclamos):
+    assert not datos.seleccionar_ventana(snapshots_reclamos, None, semanas_historia=8).sin_comparacion
 
 
 def test_dos_snapshots_de_la_misma_semana_son_un_error(caso_reclamos):

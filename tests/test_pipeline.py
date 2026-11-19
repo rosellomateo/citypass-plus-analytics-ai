@@ -181,3 +181,42 @@ def test_acumular_conserva_las_claves_extra_del_historial(caso_reclamos):
 def test_cada_caso_escribe_su_propio_archivo(caso_reclamos):
     assert pipeline.ruta_salida(caso_reclamos, settings()) == "reclamos.json"
     assert pipeline.ruta_salida(casos.MOVILIDAD, settings(output_prefix="v2/")) == "v2/movilidad.json"
+
+
+# --------------------------------------------------------------------------
+# una sola foto en gold
+# --------------------------------------------------------------------------
+
+def test_sin_snapshot_anterior_analiza_el_stock_y_lo_avisa(caso_reclamos):
+    serie = [snapshot(caso_reclamos, 38, df_reclamos(FILAS_W38))]
+
+    entrada = pipeline.ejecutar(caso_reclamos, serie, settings(), usar_llm=False)
+
+    metadata = entrada["metadata"]
+    assert entrada["semana"] == "2026-W38"
+    assert metadata["sin_comparacion"] is True
+    assert metadata["snapshot_base"] is None
+    assert metadata["semanas_comparadas"] == ["2026-W38"]
+    assert metadata["cifras"]["altas_semana"] is None
+    assert metadata["cifras"]["acumulado_total"] > 0
+    assert len(metadata["avisos"]) == 1 and "No hay snapshots semanales anteriores" in metadata["avisos"][0]
+    assert "única foto semanal disponible" in entrada["entrada_llm"]
+
+
+def test_sin_snapshot_anterior_el_resumen_lo_dice(caso_reclamos, llm_falso):
+    serie = [snapshot(caso_reclamos, 38, df_reclamos(FILAS_W38))]
+
+    entrada = pipeline.ejecutar(caso_reclamos, serie, settings(usar_llm=True))
+
+    destacados = entrada["resumen"]["puntos_destacados"]
+    assert destacados[0].startswith("No hay snapshots semanales anteriores a 2026-W38")
+    assert destacados[1:] == RESUMEN_FALSO.puntos_destacados
+    assert "única foto semanal disponible" in llm_falso[0]["mensaje"]
+
+
+def test_con_comparacion_no_se_agrega_el_aviso(caso_reclamos, snapshots_reclamos, llm_falso):
+    entrada = pipeline.ejecutar(caso_reclamos, snapshots_reclamos, settings(usar_llm=True))
+
+    assert entrada["metadata"]["sin_comparacion"] is False
+    assert entrada["resumen"]["puntos_destacados"] == RESUMEN_FALSO.puntos_destacados
+    assert "única foto semanal disponible" not in llm_falso[0]["mensaje"]

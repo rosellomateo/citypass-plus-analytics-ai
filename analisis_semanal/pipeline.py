@@ -12,8 +12,18 @@ from .config import Settings
 VERSION_ESQUEMA = "3.1"
 
 
+def aviso_sin_comparacion(ventana: datos.Ventana) -> str:
+    return (
+        f"No hay snapshots semanales anteriores a {ventana.actual.etiqueta} en la capa gold, así que "
+        f"no se puede comparar contra la semana previa ni calcular las altas de la semana: el análisis "
+        f"describe el stock acumulado al cierre de {ventana.actual.etiqueta}."
+    )
+
+
 def _avisos(ventana: datos.Ventana) -> list[str]:
     """Cosas raras de los datos que el LLM tiene que saber para no leerlas mal."""
+    if ventana.sin_comparacion:
+        return [aviso_sin_comparacion(ventana)]
     avisos = []
     for desde, hasta in ventana.saltos():
         avisos.append(
@@ -41,6 +51,7 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
         ventana.actual.etiqueta,
         [s.etiqueta for s in ventana.serie[1:-1]],
         avisos,
+        sin_comparacion=ventana.sin_comparacion,
     )
 
     fila_actual = tablas["totales"].iloc[-1]
@@ -68,7 +79,8 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
             "caso_de_uso": caso.nombre,
             "semana_actual": ventana.actual.etiqueta,
             "semanas_comparadas": ventana.semanas,
-            "snapshot_base": ventana.base.etiqueta,
+            "snapshot_base": None if ventana.sin_comparacion else ventana.base.etiqueta,
+            "sin_comparacion": ventana.sin_comparacion,
             "fuentes": [s.ruta for s in ventana.serie],
             "corte": ventana.actual.corte.isoformat() if ventana.actual.corte else None,
             "avisos": avisos,
@@ -90,6 +102,11 @@ def ejecutar(caso: CasoDeUso, snapshots: list[datos.Snapshot], settings: Setting
         raise ValueError(f"LLM_PROVIDER desconocido: {settings.llm_provider!r}")
 
     resumen, uso = generar_resumen(mensaje, settings, prompts.system_prompt(caso))
+    if ventana.sin_comparacion:
+        # Queda escrito siempre, aunque el modelo no lo diga: el tablero
+        # muestra los puntos destacados tal cual.
+        destacados = [aviso_sin_comparacion(ventana), *resumen.puntos_destacados]
+        resumen = resumen.model_copy(update={"puntos_destacados": destacados})
     entrada["resumen"] = resumen.model_dump()
     entrada["metadata"]["llm"] = uso
     if caso.columna_causa:

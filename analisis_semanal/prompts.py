@@ -128,13 +128,23 @@ def _sin_acentos(texto: str) -> str:
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
 
 
+SIN_COMPARACION = """IMPORTANTE: esta es la única foto semanal disponible en gold (no hay semana anterior). Por eso no hay \
+altas semanales: `altas_semana` viene vacía y las tablas `altas` y `altas_detalle` no traen filas, y \
+`variacion_semana` también viene vacía. No compares contra semanas previas ni hables de subas o bajas. \
+Analizá el stock acumulado al cierre (totales, estado y casos de uso). La primera oración del párrafo \
+ejecutivo tiene que decir que no hay una semana anterior para comparar y que el análisis es del stock \
+acumulado."""
+
+
 def mensaje_usuario(tablas: dict, semana_actual: str, historico: list,
-                    avisos: list | None = None) -> str:
+                    avisos: list | None = None, sin_comparacion: bool = False) -> str:
     """Arma el mensaje con las tablas en CSV y el encuadre de la ventana."""
     partes = [
         f"Semana a analizar: {semana_actual}, ya cerrada (la foto se tomó el domingo).",
         f"Semanas previas para comparar: {', '.join(historico) if historico else 'no hay'}.",
     ]
+    if sin_comparacion:
+        partes.append(SIN_COMPARACION)
     if avisos:
         partes.append("Avisos sobre los datos: " + " ".join(avisos))
 

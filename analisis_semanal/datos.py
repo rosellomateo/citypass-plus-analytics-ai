@@ -88,6 +88,10 @@ def normalizar(caso: CasoDeUso, df: pd.DataFrame) -> pd.DataFrame:
     una fila a descartar: si quedara como NaN, el groupby lo tiraria y las
     restas entre fotos no cerrarian.
     """
+    renombres = {viejo: nuevo for viejo, nuevo in caso.renombres.items()
+                 if viejo in df.columns and nuevo not in df.columns}
+    if renombres:
+        df = df.rename(columns=renombres)
     requeridas = [*caso.dimensiones_todas, caso.metrica]
     faltan = [c for c in requeridas if c not in df.columns]
     if faltan:
@@ -168,6 +172,9 @@ class Ventana:
 
     La base no se analiza: es el punto de partida contra el que se resta la
     primera semana. Por eso siempre hay una foto mas que semanas analizadas.
+
+    Excepcion: si gold tiene una sola foto (tabla nueva o historia borrada),
+    la serie es [actual] y se analiza el stock sin comparar contra nada.
     """
     serie: list[Snapshot]
 
@@ -188,7 +195,14 @@ class Ventana:
         return self.serie[1:-1]
 
     @property
+    def sin_comparacion(self) -> bool:
+        """True si no hay foto anterior: no hay altas, solo stock."""
+        return len(self.serie) == 1
+
+    @property
     def semanas(self) -> list[str]:
+        if self.sin_comparacion:
+            return [self.actual.etiqueta]
         return [s.etiqueta for s in self.serie[1:]]
 
     def saltos(self) -> list[tuple[str, str]]:
@@ -228,10 +242,7 @@ def seleccionar_ventana(
     else:
         hasta = len(ordenados)
 
+    # Con una sola foto la ventana queda [actual]: el pipeline lo avisa y el
+    # analisis se hace sobre el stock (ver Ventana.sin_comparacion).
     serie = ordenados[:hasta][-(max(semanas_historia, 1) + 1):]
-    if len(serie) < 2:
-        raise ValueError(
-            "Se necesitan al menos 2 snapshots para comparar una semana contra la anterior "
-            f"(hay {len(serie)} hasta {serie[-1].etiqueta}). La capa gold archiva uno por domingo."
-        )
     return Ventana(serie)

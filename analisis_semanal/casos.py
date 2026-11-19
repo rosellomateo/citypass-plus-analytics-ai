@@ -63,6 +63,9 @@ class CasoDeUso:
     # cifras a casos_de_uso (no a las altas)
     complementarias: tuple["TablaComplementaria", ...] = ()
     glosario: str = ""
+    # columna como la publica gold -> nombre que usa este caso (gold renombra
+    # columnas y los snapshots viejos traen el nombre anterior).
+    renombres: dict[str, str] = field(default_factory=dict)
 
     @property
     def columnas_criterio(self) -> list[str]:
@@ -149,7 +152,8 @@ una categoria real.""",
 MOVILIDAD = CasoDeUso(
     nombre="movilidad",
     prefijo="Movilidad Urbana/",
-    base_archivo="movilidad_resumen",
+    # Afectaciones de estaciones por causa (antes movilidad_resumen).
+    base_archivo="viajes_resumen",
     metrica="cantidadAfectaciones",
     etiqueta_metrica="afectaciones de estaciones",
     dimensiones=["causaTipo"],
@@ -240,6 +244,8 @@ RESIDUOS = CasoDeUso(
     nombre="residuos",
     prefijo="Gestion de Residuos Inteligente/",
     base_archivo="intervenciones_resumen",
+    # Gold renombro causaTipo (causa de la programacion) a causaProgramacion.
+    renombres={"causaProgramacion": "causaTipo", "causaProgramada": "causaTipo"},
     metrica="cantidadIntervenciones",
     etiqueta_metrica="intervenciones",
     dimensiones=["causaTipo"],

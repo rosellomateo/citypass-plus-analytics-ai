@@ -389,7 +389,7 @@ def test_las_estaciones_distintas_van_por_caso_y_nunca_en_totales():
 
     tabla = metricas.casos_de_uso(movilidad)
 
-    assert _fila_caso(tabla, "2026-W38", 1, "movilidad")["estacionesAfectadasDistintas"] == 6
+    assert _fila_caso(tabla, "2026-W38", 1, "viajes")["estacionesAfectadasDistintas"] == 6
     assert "estacionesAfectadasDistintas" not in metricas.totales(movilidad).columns
 
 
